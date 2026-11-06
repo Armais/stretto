@@ -3,8 +3,8 @@ import type { Cue } from '../game/race';
 import { bendMaterial } from './curve';
 import type { Road } from './road';
 
-// Líneas de cambio pintadas en el asfalto (P1): azules con flecha arriba para subir,
-// rojas con flecha abajo para bajar. Llegan al morro del coche justo en el tiempo fuerte.
+// Líneas de cambio pintadas en el asfalto (P1): azules para subir, rojas para bajar.
+// Llegan al morro del coche justo en el tiempo fuerte.
 
 // Tono de pintura reflectante más que de neón; lo justo para leerse de lejos con niebla.
 const UP = new THREE.Color(0x3d8bff);
@@ -12,18 +12,6 @@ const DOWN = new THREE.Color(0xff3b4a);
 const DEAD = new THREE.Color(0x2a2b2e);
 const GLOW = 1.5;
 const VISIBLE_AHEAD = 330;
-
-function chevronGeometry(): THREE.ShapeGeometry {
-  const s = new THREE.Shape();
-  s.moveTo(-0.8, -0.3);
-  s.lineTo(0, 0.4);
-  s.lineTo(0.8, -0.3);
-  s.lineTo(0.8, -0.7);
-  s.lineTo(0, 0);
-  s.lineTo(-0.8, -0.7);
-  s.closePath();
-  return new THREE.ShapeGeometry(s);
-}
 
 interface Item {
   cue: Cue;
@@ -38,15 +26,12 @@ export class CueLines {
   private readonly items: Item[] = [];
   /** Las anteriores ya quedaron atrás y no vuelven. */
   private first = 0;
-  private road: Road;
   private bar: THREE.BoxGeometry;
-  private readonly chevron = chevronGeometry();
   /** Z del morro del coche: la línea llega ahí justo en el tiempo fuerte. */
   private readonly frontZ: number;
 
   constructor(cues: Cue[], road: Road, halfLength: number) {
     this.frontZ = -halfLength;
-    this.road = road;
     // Con la cámara baja, el fondo de la línea se aplasta mucho: por eso es tan larga.
     this.bar = new THREE.BoxGeometry(road.width, 0.04, 2.4);
     this.add(cues);
@@ -59,7 +44,6 @@ export class CueLines {
 
   /** Carretera con otro número de carriles: las líneas a la vista se vuelven a pintar. */
   setRoad(road: Road): void {
-    this.road = road;
     for (let i = this.first; i < this.items.length; i++) this.release(this.items[i]);
     this.bar.dispose();
     this.bar = new THREE.BoxGeometry(road.width, 0.04, 2.4);
@@ -100,7 +84,6 @@ export class CueLines {
     this.group.removeFromParent();
     for (let i = this.first; i < this.items.length; i++) this.release(this.items[i]);
     this.bar.dispose();
-    this.chevron.dispose();
   }
 
   private build(it: Item): THREE.Group {
@@ -111,14 +94,6 @@ export class CueLines {
     const line = new THREE.Mesh(this.bar, mat);
     line.position.y = 0.03;
     obj.add(line);
-    for (let i = 0; i < this.road.laneCount; i++) {
-      const arrow = new THREE.Mesh(this.chevron, mat);
-      arrow.rotation.x = -Math.PI / 2;
-      if (it.cue.dir === -1) arrow.rotation.z = Math.PI;
-      arrow.scale.set(1.5, 3, 1);
-      arrow.position.set(this.road.laneX(i), 0.035, -4.3);
-      obj.add(arrow);
-    }
     this.group.add(obj);
     it.obj = obj;
     it.mat = mat;

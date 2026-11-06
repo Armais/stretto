@@ -3,6 +3,7 @@ import { ENDLESS_ACCENT, ENDLESS_ID, LEVELS } from '../game/levels';
 import { levelUnlocked, persist, recordsFor, save, vehicleUnlocked } from '../game/save';
 import { VEHICLES, type Vehicle, type VehicleId } from '../game/vehicles';
 import { LANG_NAMES, LANGS, currentLang, setLang, t, type TextKey } from '../i18n';
+import { usingPad } from '../input/gamepad';
 
 // Menús (P8) en HTML encima del canvas. Cada pantalla es una lista de filas: ↑ ↓ cambian de
 // fila, ← → cambian el valor de la fila y Enter la activa. También van con ratón.
@@ -13,6 +14,9 @@ interface Row {
   right?: () => void;
   enter?: () => void;
   disabled?: () => boolean;
+  /** Clic en una tarjeta de la fila (data-pick): la elige directamente. */
+  pick?: (value: string) => void;
+  cls?: string;
 }
 
 export interface ResultsData {
@@ -51,7 +55,12 @@ const PLAY_IDS = [...LEVELS.map((l) => l.id), ENDLESS_ID];
 const accentOf = (id: number): number => (id === ENDLESS_ID ? ENDLESS_ACCENT : LEVELS.find((l) => l.id === id)!.accent);
 const levelRow = (id: number): string =>
   id === ENDLESS_ID ? arrows(t('endless'), t('endlessDesc')) : arrows(t('level', { n: id }), t(`level${id}` as TextKey));
-const meter = (v: number): string => `<span class="m-meter"><span style="width:${Math.round(v * 100)}%"></span></span>${Math.round(v * 100)}%`;
+/** Volumen en diez segmentos, como el de una radio de coche. */
+const meter = (v: number): string =>
+  `<span class="m-meter">${Array.from({ length: 10 }, (_, i) => `<i${i < Math.round(v * 10) ? ' class="on"' : ''}></i>`).join('')}</span><span class="m-num">${Math.round(v * 100)}%</span>`;
+/** Flechas a los lados de una tira de tarjetas. */
+const strip = (cards: string): string =>
+  `<span class="m-arrow" data-dir="-1">‹</span><div class="m-cards">${cards}</div><span class="m-arrow" data-dir="1">›</span>`;
 
 export class Menus {
   active = false;
@@ -80,9 +89,11 @@ export class Menus {
       this.focus = Number(row.dataset.i);
       const r = this.rows[this.focus];
       const dir = target.closest<HTMLElement>('.m-arrow')?.dataset.dir;
+      const pick = target.closest<HTMLElement>('[data-pick]')?.dataset.pick;
       if (dir === '-1') r.left?.();
       else if (dir === '1') r.right?.();
-      else if (!r.disabled?.()) (r.enter ?? r.right)?.();
+      else if (pick !== undefined && r.pick) r.pick(pick);
+      else if (!r.pick && !r.disabled?.()) (r.enter ?? r.right)?.();
       this.render();
     });
     this.el.addEventListener('mousemove', (e) => {
@@ -146,7 +157,7 @@ export class Menus {
 
   title(): void {
     this.open(
-      `<h1>STRETTO</h1><div class="m-sub">NIGHT SHIFT FM · ${t('subtitle')}</div>`,
+      `<h1>STRETTO</h1><div class="m-sub"><span class="m-station">Night Shift FM</span><span>${t('subtitle')}</span></div>`,
       [
         { html: () => t('menuPlay'), enter: () => this.select() },
         { html: () => t('menuOptions'), enter: () => this.options() },
@@ -160,15 +171,20 @@ export class Menus {
     this.open(
       `<h2>${t('selectTitle')}</h2>`,
       [
+        // Las tarjetas son el propio selector: ← → recorren la tira y un clic elige.
         {
-          html: () => levelRow(this.level),
+          html: () => strip(this.levelCards()),
           left: () => (this.level = cycle(PLAY_IDS, this.level, -1)),
           right: () => (this.level = cycle(PLAY_IDS, this.level, 1)),
+          pick: (v) => (this.level = Number(v)),
+          cls: 'strip',
         },
         {
-          html: () => arrows(t('car'), t(this.vehicle)),
+          html: () => strip(this.vehicleCards()),
           left: () => (this.vehicle = cycle(VEHICLES.map((v) => v.id), this.vehicle, -1)),
           right: () => (this.vehicle = cycle(VEHICLES.map((v) => v.id), this.vehicle, 1)),
+          pick: (v) => (this.vehicle = v as VehicleId),
+          cls: 'strip',
         },
         {
           html: () => `<span class="m-cta">${t('start')}</span>`,
@@ -181,7 +197,7 @@ export class Menus {
           },
         },
       ],
-      { back: () => this.title(), body: () => this.levelCards() + this.vehicleCards(), focus: 2, accent: () => accentOf(this.level), cls: 'wide' },
+      { back: () => this.title(), focus: 2, accent: () => accentOf(this.level), cls: 'wide' },
     );
   }
 
@@ -259,7 +275,14 @@ export class Menus {
   }
 
   results(d: ResultsData): void {
-    let naming = d.newRecord;
+    const validName = (n: string) => /^[\p{L}\p{N} _.-]{3,12}$/u.test(n);
+    // El nombre se pide solo la primera vez; luego cada récord se guarda con él sin preguntar.
+    let naming = d.newRecord && !validName(save.name);
+    let saved = false;
+    if (d.newRecord && !naming) {
+      this.actions.saveRecord(save.name);
+      saved = true;
+    }
     const rows: Row[] = [{ html: () => t('retry'), enter: () => this.actions.restart() }];
     if (d.hasNext)
       rows.push({
@@ -274,16 +297,30 @@ export class Menus {
       const s = d.stats;
       const name = naming
         ? `<div class="m-record">${t('newRecord')}<input class="m-name" maxlength="12" value="${save.name}" placeholder="${t('enterName')}"></div>`
-        : '';
+        : saved
+          ? `<div class="m-record"><span>${t('newRecord')}</span><b>${save.name}</b></div>`
+          : '';
       const reach = d.endless
-        ? `<div class="m-stats">${t('survived', { time: d.endless.time })} · ${t('reached', { lap: d.endless.lap, where: d.endless.where })}</div>`
+        ? `<div class="m-reach"><div>${t('survived', { time: d.endless.time })}</div><div>${t('reached', { lap: d.endless.lap, where: d.endless.where })}</div></div>`
         : '';
+      const tally = (
+        [
+          [s.perfect, 'perfects'],
+          [s.good, 'goods'],
+          [s.fails, 'fails'],
+          [s.crashes, 'crashes'],
+        ] as const
+      )
+        .map(([n, k]) => `<div><b>${n}</b><span>${t(k)}</span></div>`)
+        .join('');
       return `<div class="m-result">
-          ${d.finished ? `<div class="m-grade">${d.grade}</div>` : ''}
+          <div class="m-headline">
+            ${d.finished ? `<div class="m-grade">${d.grade}</div>` : ''}
+            <div class="m-score"><span>${t('score')}</span><b>${d.score.toLocaleString()}</b></div>
+          </div>
           ${reach}
-          <div class="m-score">${t('score')} ${d.score.toLocaleString()}</div>
-          <div class="m-stats">${t('perfects')} ${s.perfect} · ${t('goods')} ${s.good} · ${t('fails')} ${s.fails} · ${t('crashes')} ${s.crashes}</div>
-          ${d.unlocked.map((u) => `<div class="m-unlock">${t('unlocked', { what: u })}</div>`).join('')}
+          <div class="m-tally">${tally}</div>
+          ${d.unlocked.length ? `<div class="m-unlocks">${d.unlocked.map((u) => `<div>${t('unlocked', { what: u })}</div>`).join('')}</div>` : ''}
           ${name}</div>`;
     };
     this.open(`<h2>${d.finished ? t('finished') : t('stalled')}</h2>`, rows, {
@@ -296,10 +333,12 @@ export class Menus {
         if (e.code === 'Enter') {
           const input = this.el.querySelector<HTMLInputElement>('.m-name');
           const name = (input?.value ?? '').trim();
-          if (!/^[\p{L}\p{N} _.-]{3,12}$/u.test(name)) return true;
+          // Con mando no se puede escribir: sin nombre válido, A hace lo de la opción marcada.
+          if (!validName(name)) return usingPad() ? false : true;
           save.name = name;
           this.actions.saveRecord(name);
           naming = false;
+          saved = true;
           this.extraKey = null;
           return true;
         }
@@ -308,6 +347,8 @@ export class Menus {
           this.extraKey = null;
           return true;
         }
+        // ↑ ↓ siguen moviendo por las opciones; el resto de teclas (WASD incluidas) son para escribir.
+        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') return false;
         return 'pass';
       };
       this.render();
@@ -328,7 +369,8 @@ export class Menus {
     };
     this.open(`<h2>${t('calTitle')}</h2>`, [], { back: () => this.options(), body });
     this.extraKey = (e) => {
-      if (e.code === 'Space' && result === null) {
+      // Enter también marca el golpe: es el botón A del mando.
+      if ((e.code === 'Space' || e.code === 'Enter') && result === null) {
         const heard = cal.heardAt(e.timeStamp);
         const near = cal.times.reduce((a, b) => (Math.abs(b - heard) < Math.abs(a - heard) ? b : a));
         if (Math.abs(near - heard) < 0.3) offsets.push(heard - near);
@@ -339,7 +381,8 @@ export class Menus {
         }
         return true;
       }
-      if (e.code === 'Enter' && result !== null) {
+      // Se confirma cuando ya han sonado todos los golpes: así un golpe de más con A no guarda sin querer.
+      if (e.code === 'Enter' && result !== null && cal.heardAt(e.timeStamp) > cal.times[cal.times.length - 1] + 0.3) {
         save.latencyMs = result;
         persist();
         this.options();
@@ -351,41 +394,46 @@ export class Menus {
 
   // ---------- Piezas ----------
 
+  /** El número del nivel es lo que se lee primero, en el color de acento del nivel. */
   private levelCards(): string {
-    return `<div class="m-cards">${LEVELS.map((l) => {
+    return `${LEVELS.map((l) => {
       const open = levelUnlocked(l.id);
       const best = recordsFor(l.id, save.difficulty)[0];
       const foot = !open ? t('unlockLevel', { n: l.id - 1 }) : best ? t('best', { score: best.score.toLocaleString(), grade: best.grade }) : t('noBest');
-      return `<div class="m-card${l.id === this.level ? ' sel' : ''}${open ? '' : ' locked'}" style="--accent:${css(l.accent)}">
-        <div class="m-card-k">${t('level', { n: l.id })}</div>
+      return `<div class="m-card${l.id === this.level ? ' sel' : ''}${open ? '' : ' locked'}" data-pick="${l.id}" style="--accent:${css(l.accent)}">
+        <div class="m-card-n">${l.id}</div>
         <div class="m-card-t">${t(`level${l.id}` as TextKey)}</div>
-        <div class="m-card-s">${t('lanes', { n: l.lanes })} · ${t('bpm', { n: l.song.bpm })}</div>
+        <div class="m-card-s"><div>${t('bpm', { n: l.song.bpm })}</div><div>${t('lanes', { n: l.lanes })}</div></div>
         <div class="m-card-f">${foot}</div></div>`;
-    }).join('')}${this.endlessCard()}</div>`;
+    }).join('')}${this.endlessCard()}`;
   }
 
   private endlessCard(): string {
     const best = recordsFor(ENDLESS_ID, save.difficulty)[0];
     const lanes = LEVELS.map((l) => l.lanes);
     const bpms = LEVELS.map((l) => l.song.bpm);
-    return `<div class="m-card${this.level === ENDLESS_ID ? ' sel' : ''}" style="--accent:${css(ENDLESS_ACCENT)}">
-        <div class="m-card-k">∞</div>
+    return `<div class="m-card${this.level === ENDLESS_ID ? ' sel' : ''}" data-pick="${ENDLESS_ID}" style="--accent:${css(ENDLESS_ACCENT)}">
+        <div class="m-card-n inf">∞</div>
         <div class="m-card-t">${t('endless')}</div>
-        <div class="m-card-s">${t('lanes', { n: `${Math.min(...lanes)}–${Math.max(...lanes)}` })} · ${t('bpm', { n: `${Math.min(...bpms)}–${Math.max(...bpms)}` })}</div>
+        <div class="m-card-s"><div>${t('bpm', { n: `${Math.min(...bpms)}–${Math.max(...bpms)}` })}</div><div>${t('lanes', { n: `${Math.min(...lanes)}–${Math.max(...lanes)}` })}</div></div>
         <div class="m-card-f">${best ? t('best', { score: best.score.toLocaleString(), grade: best.grade }) : t('noBest')}</div></div>`;
   }
 
   private vehicleCards(): string {
-    const trait = (v: Vehicle) =>
-      `${t('statWindow')} ${t(v.traits.window)} · ${t('statLane')} ${t(v.traits.lane === 'normal' ? 'normalSpeed' : v.traits.lane)} · ${t('statEngine')} ${t(v.traits.engine === 'normal' ? 'normalEngine' : v.traits.engine)}`;
-    return `<div class="m-cards">${VEHICLES.map((v) => {
+    const traits = (v: Vehicle) =>
+      `<dl class="m-traits">
+        <dt>${t('statWindow')}</dt><dd>${t(v.traits.window)}</dd>
+        <dt>${t('statLane')}</dt><dd>${t(v.traits.lane === 'normal' ? 'normalSpeed' : v.traits.lane)}</dd>
+        <dt>${t('statEngine')}</dt><dd>${t(v.traits.engine === 'normal' ? 'normalEngine' : v.traits.engine)}</dd>
+      </dl>`;
+    return VEHICLES.map((v) => {
       const open = vehicleUnlocked(v.id);
-      return `<div class="m-card${v.id === this.vehicle ? ' sel' : ''}${open ? '' : ' locked'}">
-        <div class="m-card-k">${t('gears', { n: v.gears })}</div>
+      return `<div class="m-card car${v.id === this.vehicle ? ' sel' : ''}${open ? '' : ' locked'}" data-pick="${v.id}">
         <div class="m-card-t">${t(v.id)}</div>
-        <div class="m-card-s">${trait(v)}</div>
+        <div class="m-card-s">${t('gears', { n: v.gears })}</div>
+        ${traits(v)}
         <div class="m-card-f">${open ? '' : t('unlockLevel', { n: v.unlockAfter })}</div></div>`;
-    }).join('')}</div>`;
+    }).join('');
   }
 
   private recordsTable(): string {
@@ -449,14 +497,33 @@ export class Menus {
     const input = this.el.querySelector<HTMLInputElement>('.m-name');
     const typed = input?.value;
     const rows = this.rows
-      .map((r, i) => `<div class="m-row${i === this.focus ? ' focus' : ''}${r.disabled?.() ? ' disabled' : ''}" data-i="${i}">${r.html()}</div>`)
+      .map(
+        (r, i) =>
+          `<div class="m-row${r.cls ? ` ${r.cls}` : ''}${i === this.focus ? ' focus' : ''}${r.disabled?.() ? ' disabled' : ''}" data-i="${i}">${r.html()}</div>`,
+      )
       .join('');
     this.el.style.setProperty('--accent', css(this.accent()));
-    this.el.innerHTML = `<div class="m-panel">${this.header}${this.body()}<div class="m-rows">${rows}</div><div class="m-hint">${t('navHint')}</div></div>`;
+    this.el.innerHTML = `<div class="m-panel">${this.header}${this.body()}<div class="m-rows">${rows}</div></div>${this.legend()}`;
     const again = this.el.querySelector<HTMLInputElement>('.m-name');
     if (again && typed !== undefined) {
       again.value = typed;
       again.focus();
     }
+  }
+
+  /** Teclas que sirven ahora mismo, siempre en la misma esquina; cambian según la fila. */
+  private legend(): string {
+    const row = this.rows[this.focus];
+    const keys: [string[], string][] = [];
+    if (this.rows.length > 1) keys.push([['↑', '↓'], t('navMove')]);
+    if (row?.left) keys.push([['←', '→'], t('navChange')]);
+    // Con mando se enseñan sus botones; las flechas valen para la cruceta.
+    const pad = usingPad();
+    if (row?.enter && !row.disabled?.()) keys.push([[pad ? 'A' : 'Enter'], t('navPick')]);
+    if (this.back) keys.push([[pad ? 'B' : 'Esc'], t('navBack')]);
+    const cls = (k: string) => (pad && (k === 'A' || k === 'B') ? ' class="btn"' : k.length === 1 ? ' class="sym"' : '');
+    return `<div class="m-legend">${keys
+      .map(([caps, label]) => `<span>${caps.map((k) => `<kbd${cls(k)}>${k}</kbd>`).join('')}${label}</span>`)
+      .join('')}</div>`;
   }
 }

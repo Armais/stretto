@@ -142,6 +142,17 @@ export class EndlessTimeline {
     return this.blockAt(t)?.barDur ?? this.stationAt(t).sweepBarDur;
   }
 
+  /** Primer pulso (negra) desde `t`. Los tramos son de compases enteros, así que el pulso cae dentro. */
+  nextBeat(t: number): number {
+    for (let i = this.spans.length - 1; i >= 0; i--) {
+      const s = this.spans[i];
+      if (t < s.start) continue;
+      const beat = s.barDur / 4;
+      return s.start + Math.ceil((t - s.start) / beat - 1e-9) * beat;
+    }
+    return t;
+  }
+
   /** Sección que suena en `t` ('intro' en el barrido). */
   sectionAt(t: number): Section {
     const b = this.blockAt(t);

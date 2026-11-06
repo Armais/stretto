@@ -43,7 +43,8 @@ export const PICKUPS = {
   repair: 25,
   points: 50,
   multiplier: 2,
-  nitroSeconds: 3,
+  /** El nitro dura hasta la siguiente línea, y si la aciertas el cambio vale esto por sus puntos. */
+  nitroShift: 2,
   /** Velocidad extra durante el nitro. Provisional. */
   nitroBoost: 1.3,
   /** La reparación solo aparece con el motor por debajo de esto. */

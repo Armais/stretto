@@ -59,19 +59,45 @@ function tailStreaks(tails: number[], halfLength: number): THREE.Group {
   return g;
 }
 
-/** Copia del modelo, opcionalmente con otra pintura (todo lo que use un material st_pintura*). */
+/**
+ * Copia de un material con tope de brillo. Nuestros faros dan de frente a la trasera del coche
+ * de delante, y uno blanco o plateado pasaba del umbral del bloom (0,82) y se veía como un foco
+ * que deslumbraba. Con el tope en 0,6 la carrocería ya no hace bloom; los pilotos van aparte.
+ */
+function capped(m: THREE.Material): THREE.Material {
+  const c = m.clone();
+  // Con un define propio el programa no se mezcla con el de los materiales sin tope.
+  c.defines = { ...c.defines, STRETTO_CAP: '' };
+  c.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      '#include <opaque_fragment>\ngl_FragColor.rgb = min(gl_FragColor.rgb, vec3(0.6));',
+    );
+  };
+  return c;
+}
+
+/**
+ * Copia del modelo, opcionalmente con otra pintura (todo lo que use un material st_pintura*).
+ * Con pintura es un coche del tráfico: todo menos los pilotos lleva tope de brillo.
+ */
 function instance(model: THREE.Group, paint: number | null): { car: THREE.Group; wheels: THREE.Object3D[] } {
   const car = model.clone(true);
   const wheels: THREE.Object3D[] = [];
+  const copies = new Map<THREE.Material, THREE.Material>();
   car.traverse((o) => {
     if (o.name.startsWith('rueda_')) wheels.push(o);
     const mesh = o as THREE.Mesh;
     if (paint === null || !mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const repainted = mats.map((m) => {
-      if (!m.name.startsWith('st_pintura')) return m;
-      const c = (m as THREE.MeshStandardMaterial).clone();
-      c.color.setHex(paint);
+      if (m.name.startsWith('st_luz')) return m;
+      let c = copies.get(m);
+      if (!c) {
+        c = capped(m);
+        if (m.name.startsWith('st_pintura')) (c as THREE.MeshStandardMaterial).color.setHex(paint);
+        copies.set(m, c);
+      }
       return c;
     });
     mesh.material = Array.isArray(mesh.material) ? repainted : repainted[0];

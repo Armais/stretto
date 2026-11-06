@@ -5,7 +5,7 @@ import { Mixer } from './audio/mixer';
 import { Music } from './audio/music';
 import { StemMusic, dropStems, loadStems, type MusicPlayer, type StemBuffers } from './audio/stems';
 import { ENGINES, Sfx } from './audio/sfx';
-import { LAYERS, PICKUPS, TRAFFIC, WORLD } from './config';
+import { LAYERS, PICKUPS, TRAFFIC, WORLD, type PickupKind } from './config';
 import { EndlessTimeline, LAP, type Station } from './game/endless';
 import { ENDLESS_ID, LEVELS, type LevelDef } from './game/levels';
 import { Race, type Cue, type RaceEvent } from './game/race';
@@ -13,6 +13,7 @@ import { addRecord, levelUnlocked, markPassed, qualifies, save, vehicleUnlocked 
 import { barDuration, sectionAt } from './game/song';
 import { VEHICLES, vehicleById, type Vehicle, type VehicleId } from './game/vehicles';
 import { setLang, t, type TextKey } from './i18n';
+import { startGamepad } from './input/gamepad';
 import { Hud } from './ui/hud';
 import { Menus } from './ui/menus';
 import { PlayerCar } from './world/car';
@@ -274,11 +275,14 @@ function pauseRace(): void {
   phase = 'paused';
   mixer.hold = true;
   void mixer.ctx.suspend();
+  // El HUD se esconde durante la pausa: el cuentarrevoluciones taparía las teclas del menú.
+  hud.setVisible(false);
   menus.pause();
 }
 
 function resumeRace(): void {
   menus.hide();
+  hud.setVisible(true);
   mixer.hold = false;
   mixer.resume();
   phase = 'racing';
@@ -338,7 +342,7 @@ function endRace(r: Race, songT: number): void {
   const unlocked: string[] = [];
   if (finished) {
     const u = markPassed(level.id);
-    if (u.level) unlocked.push(`${t('level', { n: u.level })} · ${t(`level${u.level}` as TextKey)}`);
+    if (u.level) unlocked.push(`${t('level', { n: u.level })}, ${t(`level${u.level}` as TextKey)}`);
     for (const v of u.vehicles) unlocked.push(t(v));
   }
   menus.results({
@@ -364,7 +368,8 @@ function handleEvent(ev: RaceEvent): void {
         keyChanged = true;
       }
       sfx.shift(ev.quality === 'perfect');
-      hud.judge(ev.quality === 'perfect' ? t('perfect') : t('good'), ev.quality);
+      // El cambio que cierra un nitro vale el doble, y se dice.
+      hud.judge((ev.quality === 'perfect' ? t('perfect') : t('good')) + (ev.nitro ? ' ×2' : ''), ev.quality);
       stage.kick(ev.quality === 'perfect' ? 0.3 : 0.15);
       break;
     case 'badShift':
@@ -409,6 +414,19 @@ function targetRpm(r: Race, songT: number): number {
   const p = Math.min(1, Math.max(0, (songT - from) / Math.max(0.001, next.time - from)));
   const curve = Math.pow(p, 1.8);
   return next.dir === 1 ? 0.3 + 0.7 * curve : 0.8 - 0.68 * curve;
+}
+
+/** Primer pulso de la canción desde `songT`: el nitro arranca ahí para que la mezcla entre a tiempo. */
+function nextBeat(songT: number): number {
+  if (endless) return endless.timeline.nextBeat(songT);
+  const beat = barDuration(level.song) / 4;
+  return Math.ceil(songT / beat - 1e-9) * beat;
+}
+
+/** Recoge un premio. El nitro arranca en el siguiente pulso y dura al menos un compás. */
+function collect(r: Race, kind: PickupKind, songT: number): void {
+  const beat = nextBeat(songT);
+  r.collect(kind, beat, endless ? endless.timeline.barDurAt(beat) : barDuration(level.song));
 }
 
 /** Radio de Vela y, en el nivel 1 mientras no esté pasado, los textos del tutorial. */
@@ -470,10 +488,12 @@ window.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'ShiftRight':
     case 'ArrowUp':
+    case 'KeyW':
       race.shift(1, judged(e.timeStamp));
       break;
     case 'ShiftLeft':
     case 'ArrowDown':
+    case 'KeyS':
       race.shift(-1, judged(e.timeStamp));
       break;
     case 'ArrowLeft':
@@ -497,6 +517,8 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 window.addEventListener('pointerdown', () => mixer.resume());
+// El mando llega como teclas: en carrera los gatillos cambian de marcha y Start pausa.
+startGamepad(() => (phase === 'paused' ? 'pause' : phase === 'racing' && !menus.active ? 'race' : 'menu'));
 
 let lastFrame = performance.now();
 let bendClock = 0;
@@ -525,16 +547,16 @@ function frame(now: number): void {
       invulnerable = Math.max(0, invulnerable - dt);
       if (traffic.update(dt, speed, car.x, invulnerable <= 0, vehicle)) race.crash();
       const blocked = (lane: number, z: number) => traffic.snapshot().some((c) => c.lane === lane && Math.abs(c.z - z) < 25);
-      for (const kind of pickups.update(dt, speed, car.x, race.engine, blocked)) race.collect(kind, songT);
+      for (const kind of pickups.update(dt, speed, car.x, race.engine, blocked)) collect(race, kind, songT);
       for (const ev of race.drainEvents()) handleEvent(ev);
       const nitroOn = race.nitroActive(songT);
       if (race.gear !== lastGear || nitroOn !== lastNitro) {
-        // El nitro abre la mezcla: suenan todas las capas mientras dura.
+        // El nitro abre la mezcla: suenan todas las capas desde su pulso hasta su línea.
         music?.setLayers(nitroOn ? new Set(LAYERS) : race.activeLayers());
         lastGear = race.gear;
         lastNitro = nitroOn;
       }
-      nitro = nitroOn ? (race.nitroUntil - songT) / PICKUPS.nitroSeconds : 0;
+      nitro = race.nitroLeft(songT);
       rpm += (targetRpm(race, songT) + (nitroOn ? 0.1 : 0) - rpm) * Math.min(1, dt * 12);
       sfx.engineSet(rpm);
       messages(race, songT);
@@ -601,6 +623,7 @@ if (import.meta.env.DEV) {
   Object.assign(window, {
     __stretto: {
       start: (lvl: number, veh: VehicleId) => startRace(lvl, veh),
+      nitro: () => race && collect(race, 'nitro', songTime(performance.now())),
       curve,
       state: () => ({
         phase,
@@ -612,6 +635,7 @@ if (import.meta.env.DEV) {
         engine: race?.engine ?? 100,
         score: race?.score ?? 0,
         multiplier: race?.multiplier ?? 1,
+        nitroFrom: race?.nitroFrom ?? -1,
         result: race?.result ?? 'running',
         grade: race && race.result === 'finished' ? race.grade() : null,
         next: race?.nextCue() ? { time: race.nextCue()!.time, dir: race.nextCue()!.dir } : null,

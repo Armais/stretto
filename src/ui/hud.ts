@@ -71,7 +71,7 @@ export class Hud {
       <div class="hud-tune"></div>
       <div class="hud-judge"></div>
       <div class="hud-hint"></div>
-      <div class="hud-radio"><div class="hud-radio-k">NIGHT SHIFT FM · VELA</div><div class="hud-radio-t"></div></div>
+      <div class="hud-radio"><div class="hud-radio-k"><b>Vela</b><span>Night Shift FM</span></div><div class="hud-radio-t"></div></div>
       <div class="hud-tach">
         <svg viewBox="0 0 260 200">
           <path class="tach-base" d="${arc(0, 1, R)}"/>

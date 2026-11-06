@@ -34,7 +34,7 @@ export interface Cue {
 }
 
 export type RaceEvent =
-  | { type: 'shift'; quality: 'perfect' | 'good'; cue: Cue }
+  | { type: 'shift'; quality: 'perfect' | 'good'; cue: Cue; nitro: boolean }
   | { type: 'badShift'; cue: Cue | null }
   | { type: 'missed'; cue: Cue }
   | { type: 'crash' }
@@ -49,8 +49,8 @@ export class Race {
   score = 0;
   /** 1 o 2: el multiplicador dura hasta el siguiente fallo. */
   multiplier = 1;
-  /** Segundos de canción hasta los que dura el nitro. */
-  nitroUntil = -1;
+  /** Pulso de la canción en que arranca el nitro (-1 sin nitro). */
+  nitroFrom = -1;
   result: RaceResult = 'running';
   readonly cues: Cue[] = [];
   /** Infinity en el modo infinito: solo se acaba al calar el motor. */
@@ -63,6 +63,15 @@ export class Race {
   private events: RaceEvent[] = [];
   /** Puntos de los cambios sin multiplicador ni premios: es lo que cuenta para la nota. */
   private shiftPoints = 0;
+  /**
+   * Línea en que acaba el nitro: la primera que quede al menos a un compás de su arranque. Así la
+   * mezcla se abre en un pulso y se cierra en el tiempo fuerte de esa línea, y ese cambio vale el
+   * doble. null si aún no está escrita (modo infinito) o si no quedan líneas: entonces dura hasta
+   * el final.
+   */
+  private nitroCue: Cue | null = null;
+  /** Lo antes que puede caer la línea del nitro: su arranque más un compás. */
+  private nitroMinEnd = 0;
 
   /** `cues`: líneas en orden, con su tiempo en segundos desde el compás 0. */
   constructor(vehicle: Vehicle, difficulty: Difficulty, cues: TimedCue[], endTime: number) {
@@ -87,6 +96,7 @@ export class Race {
       return { time: c.time, dir: c.dir, targetGear: gear, state: 'pending', judgedAt: 0 };
     });
     this.cues.push(...added);
+    if (this.nitroFrom >= 0 && !this.nitroCue) this.nitroCue = this.firstCueFrom(this.nitroMinEnd);
     return added;
   }
 
@@ -123,13 +133,15 @@ export class Race {
       const perfect = Math.abs(t - cue.time) <= this.window() * PERFECT_FRACTION;
       this.next++;
       cue.judgedAt = t;
+      const nitro = cue === this.nitroCue && t >= this.nitroFrom;
+      if (cue === this.nitroCue) this.endNitro();
       if (cue.dir === dir) {
         cue.state = 'hit';
         const base = perfect ? POINTS.perfect : POINTS.good;
         this.shiftPoints += base;
-        this.score += base * this.multiplier;
+        this.score += base * this.multiplier * (nitro ? PICKUPS.nitroShift : 1);
         if (perfect) this.addEngine(ENGINE.perfect);
-        this.events.push({ type: 'shift', quality: perfect ? 'perfect' : 'good', cue });
+        this.events.push({ type: 'shift', quality: perfect ? 'perfect' : 'good', cue, nitro });
       } else {
         // Sentido equivocado: castiga y el coche cambia solo, como con una línea fallada.
         cue.state = 'wrong';
@@ -153,17 +165,35 @@ export class Race {
     this.events.push({ type: 'crash' });
   }
 
-  collect(kind: PickupKind, t: number): void {
+  /**
+   * `beat`: primer pulso de la canción desde ahora, que es donde arranca el nitro.
+   * `bar`: lo que dura un compás en ese momento; el nitro dura al menos eso.
+   */
+  collect(kind: PickupKind, beat: number, bar: number): void {
     if (this.result !== 'running') return;
     if (kind === 'repair') this.addEngine(PICKUPS.repair);
     else if (kind === 'points') this.score += PICKUPS.points * this.multiplier;
     else if (kind === 'multiplier') this.multiplier = PICKUPS.multiplier;
-    else this.nitroUntil = t + PICKUPS.nitroSeconds;
+    else if (this.nitroFrom < 0) {
+      // Con un nitro en marcha (o esperando su pulso), el nuevo no cambia nada.
+      this.nitroFrom = beat;
+      this.nitroMinEnd = beat + bar;
+      this.nitroCue = this.firstCueFrom(this.nitroMinEnd);
+    }
     this.events.push({ type: 'pickup', kind });
   }
 
   nitroActive(t: number): boolean {
-    return t < this.nitroUntil;
+    return this.result === 'running' && this.nitroFrom >= 0 && t >= this.nitroFrom;
+  }
+
+  /** Lo que queda de nitro: 1 al arrancar y 0 al llegar a su línea (0 sin nitro). */
+  nitroLeft(t: number): number {
+    if (!this.nitroActive(t)) return 0;
+    const end = this.nitroCue?.time ?? this.endTime;
+    if (!Number.isFinite(end)) return 1;
+    const span = end - this.nitroFrom;
+    return span > 0 ? Math.max(0, Math.min(1, (end - t) / span)) : 0;
   }
 
   update(t: number): void {
@@ -173,6 +203,7 @@ export class Race {
       this.next++;
       cue.state = 'missed';
       cue.judgedAt = t;
+      if (cue === this.nitroCue) this.endNitro();
       this.multiplier = 1;
       this.gear = cue.targetGear;
       this.addEngine(ENGINE.missedLine);
@@ -192,6 +223,17 @@ export class Race {
     const ratio = this.shiftPoints / this.maxScore;
     for (const g of GRADES) if (ratio >= g.min) return g.grade;
     return 'C';
+  }
+
+  /** Primera línea pendiente que llega en `t` o después (con margen para el redondeo). */
+  private firstCueFrom(t: number): Cue | null {
+    for (let i = this.next; i < this.cues.length; i++) if (this.cues[i].time >= t - 1e-6) return this.cues[i];
+    return null;
+  }
+
+  private endNitro(): void {
+    this.nitroFrom = -1;
+    this.nitroCue = null;
   }
 
   private addEngine(delta: number): void {
