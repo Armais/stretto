@@ -281,6 +281,12 @@ def cmd_song(name: str, only: list[str], key: bool = False) -> None:
     for layer in layers:
         wav = os.path.join(TMP_DIR, f"{name}_{prefix}{layer}.wav")
         code = f"set :stem, :{layer}\nset :from_bar, {from_bar}\nset :transpose, {transpose}\n{lib}\n{score}\n"
+        # El puerto de cues pierde los paquetes de más de ~8 KB: la canción va en un fichero
+        # y por OSC solo viaja la orden de leerlo.
+        src = os.path.join(TMP_DIR, f"{name}_{prefix}{layer}.rb")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(code)
+        code = f'eval(File.read("{src.replace(os.sep, "/")}", encoding: "UTF-8"))'
         print(f"== {name}/{layer}: grabando {length + bar + TAIL_S + 1:.1f} s", flush=True)
         spider(ports, "/stop-all-jobs")
         time.sleep(2.5)  # que se apaguen las colas de reverb de la pista anterior

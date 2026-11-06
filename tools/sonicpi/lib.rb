@@ -23,6 +23,11 @@ define :stretto_plan do |sections|
   sections.flat_map { |name, bars| [name] * bars }
 end
 
+# Frase de un compás escrita en texto: "a4:1 r:0.5 c5:0.5 ..." (nota:tiempos, r = silencio).
+define :parse_line do |s|
+  s.split.map { |t| n, d = t.split(":"); [n == "r" ? nil : n.to_sym, d.to_f] }
+end
+
 # ¿Es el último compás de una sección? (para los redobles)
 define :section_end? do |plan, bar|
   bar + 1 < plan.length && plan[bar + 1] != plan[bar]
