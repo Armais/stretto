@@ -1,0 +1,18 @@
+# Logo del estudio por capas (tools/estudio/astro_arcade_logo.py). No se edita a mano.
+# lienzo <ancho> <alto>: el logo entero, en px
+# <pieza>.<brillo|tubo> o apagado: <x> <y> <ancho> <alto> en estudio.png y <dx> <dy> en el lienzo
+# Se pintan en este orden.
+lienzo 886 619
+apagado 1056 0 721 475 83 80
+a1.brillo 0 0 520 541 54 0
+a2.brillo 528 0 520 541 307 0
+anillo.brillo 722 549 843 357 0 130
+planeta.brillo 1573 549 217 217 669 188
+astro.brillo 0 938 379 182 77 436
+arcade.brillo 387 938 430 181 377 438
+a1.tubo 0 549 353 381 138 80
+a2.tubo 361 549 353 381 390 80
+anillo.tubo 825 938 689 175 83 217
+planeta.tubo 1522 938 53 53 751 270
+astro.tubo 1583 938 270 50 128 505
+arcade.tubo 0 1128 327 50 426 505

@@ -14,6 +14,7 @@ import { barDuration, sectionAt } from './game/song';
 import { VEHICLES, vehicleById, type Vehicle, type VehicleId } from './game/vehicles';
 import { setLang, t, type TextKey } from './i18n';
 import { startGamepad } from './input/gamepad';
+import { playBoot } from './ui/boot';
 import { Hud } from './ui/hud';
 import { Menus } from './ui/menus';
 import { PlayerCar } from './world/car';
@@ -654,6 +655,8 @@ if (import.meta.env.DEV) {
 
 hud.setVisible(false);
 menus.title();
+// El logo del estudio tapa el título hasta que acaba o se salta.
+void playBoot(mixer);
 requestAnimationFrame(frame);
 // El fondo del título se rehace con las piezas de Blender en cuanto llegan.
 void loadProps(level.scenery)
