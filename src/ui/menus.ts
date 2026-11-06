@@ -283,16 +283,44 @@ export class Menus {
       this.actions.saveRecord(save.name);
       saved = true;
     }
-    const rows: Row[] = [{ html: () => t('retry'), enter: () => this.actions.restart() }];
+    /** Guarda el nombre escrito en la casilla, si es válido. */
+    const commit = (): boolean => {
+      if (!naming) return false;
+      const name = (this.el.querySelector<HTMLInputElement>('.m-name')?.value ?? '').trim();
+      if (!validName(name)) return false;
+      save.name = name;
+      this.actions.saveRecord(name);
+      naming = false;
+      saved = true;
+      this.extraKey = null;
+      return true;
+    };
+    // Salir con el ratón también guarda lo escrito, aunque no se haya pulsado Enter.
+    const rows: Row[] = [
+      {
+        html: () => t('retry'),
+        enter: () => {
+          commit();
+          this.actions.restart();
+        },
+      },
+    ];
     if (d.hasNext)
       rows.push({
         html: () => t('nextLevel'),
         enter: () => {
+          commit();
           this.level = d.level + 1;
           this.select();
         },
       });
-    rows.push({ html: () => t('toMenu'), enter: () => this.actions.quit() });
+    rows.push({
+      html: () => t('toMenu'),
+      enter: () => {
+        commit();
+        this.actions.quit();
+      },
+    });
     const body = () => {
       const s = d.stats;
       const name = naming
@@ -331,15 +359,8 @@ export class Menus {
     if (naming) {
       this.extraKey = (e) => {
         if (e.code === 'Enter') {
-          const input = this.el.querySelector<HTMLInputElement>('.m-name');
-          const name = (input?.value ?? '').trim();
           // Con mando no se puede escribir: sin nombre válido, A hace lo de la opción marcada.
-          if (!validName(name)) return usingPad() ? false : true;
-          save.name = name;
-          this.actions.saveRecord(name);
-          naming = false;
-          saved = true;
-          this.extraKey = null;
+          if (!commit()) return usingPad() ? false : true;
           return true;
         }
         if (e.code === 'Escape') {
