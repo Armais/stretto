@@ -18,8 +18,6 @@ export interface SaveData {
   musicVolume: number;
   sfxVolume: number;
   difficulty: Difficulty;
-  /** Retraso medido del equipo del jugador, en ms. */
-  latencyMs: number;
   /** Niveles terminados (sin calar el motor). */
   passed: number[];
   /** Último nivel y coche elegidos. */
@@ -38,7 +36,6 @@ const DEFAULTS: SaveData = {
   musicVolume: 0.8,
   sfxVolume: 0.9,
   difficulty: 'normal',
-  latencyMs: 0,
   passed: [],
   lastLevel: 1,
   lastVehicle: 'compact',

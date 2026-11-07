@@ -16,7 +16,7 @@ export const ENGINE = {
 } as const;
 
 /** P5: media ventana de cambio en 1.ª marcha (ms) y cuánto se estrecha en cada marcha. */
-export const WINDOW_MS: Record<Difficulty, number> = { easy: 150, normal: 100, hard: 65 };
+export const WINDOW_MS: Record<Difficulty, number> = { easy: 180, normal: 120, hard: 80 };
 export const WINDOW_NARROW_PER_GEAR = 0.08;
 /** Provisional: parte central de la ventana que cuenta como perfecto. */
 export const PERFECT_FRACTION = 0.4;

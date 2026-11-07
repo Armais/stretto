@@ -4,6 +4,7 @@ import { levelUnlocked, persist, recordsFor, save, vehicleUnlocked } from '../ga
 import { VEHICLES, type Vehicle, type VehicleId } from '../game/vehicles';
 import { LANG_NAMES, LANGS, currentLang, setLang, t, type TextKey } from '../i18n';
 import { usingPad } from '../input/gamepad';
+import { usingTouch } from '../input/touch';
 
 // Menús (P8) en HTML encima del canvas. Cada pantalla es una lista de filas: ↑ ↓ cambian de
 // fila, ← → cambian el valor de la fila y Enter la activa. También van con ratón.
@@ -40,8 +41,6 @@ export interface MenuActions {
   quit(): void;
   /** Volumen o idioma cambiados: hay que aplicarlos. */
   settingsChanged(): void;
-  /** Programa golpes de metrónomo y devuelve cuándo se oirán (tiempo de audio). */
-  calibrationClicks(): { times: number[]; heardAt: (perfMs: number) => number };
   saveRecord(name: string): void;
 }
 
@@ -84,6 +83,11 @@ export class Menus {
     container.appendChild(this.el);
     this.el.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
+      if (target.closest('.m-back')) {
+        this.back?.();
+        this.render();
+        return;
+      }
       const row = target.closest<HTMLElement>('.m-row');
       if (!row) return;
       this.focus = Number(row.dataset.i);
@@ -225,12 +229,6 @@ export class Menus {
           left: () => this.changeDifficulty(-1),
           right: () => this.changeDifficulty(1),
         },
-        {
-          html: () => arrows(t('latency'), `${save.latencyMs} ms`),
-          left: () => this.changeLatency(-5),
-          right: () => this.changeLatency(5),
-        },
-        { html: () => t('calibrate'), enter: () => this.calibration() },
         { html: () => t('back'), enter: () => this.title() },
       ],
       { back: () => this.title() },
@@ -352,13 +350,19 @@ export class Menus {
           ${name}</div>`;
     };
     this.open(`<h2>${d.finished ? t('finished') : t('stalled')}</h2>`, rows, {
-      back: () => this.actions.quit(),
+      // También con el «Volver» de la pantalla táctil se guarda lo escrito.
+      back: () => {
+        commit();
+        this.actions.quit();
+      },
       body,
       accent: () => accentOf(d.level),
+      cls: 'results',
     });
     if (naming) {
       this.extraKey = (e) => {
-        if (e.code === 'Enter') {
+        // El teclado del móvil (Android) suele mandar el Enter sin `code`.
+        if (e.code === 'Enter' || e.key === 'Enter') {
           // Con mando no se puede escribir: sin nombre válido, A hace lo de la opción marcada.
           if (!commit()) return usingPad() ? false : true;
           return true;
@@ -375,42 +379,6 @@ export class Menus {
       this.render();
       this.el.querySelector<HTMLInputElement>('.m-name')?.focus();
     }
-  }
-
-  calibration(): void {
-    const TOTAL = 12;
-    const cal = this.actions.calibrationClicks();
-    const offsets: number[] = [];
-    let result: number | null = null;
-    const body = () => {
-      const res = result === null ? '' : `<div class="m-score">${t('calResult', { ms: result })}</div><div class="m-small">${t('calDone')}</div>`;
-      return `<div class="m-result"><div class="m-stats">${t('calHint')}</div><div class="m-beats">${cal.times
-        .map((_, i) => `<span class="${i < offsets.length ? 'on' : ''}"></span>`)
-        .join('')}</div><div class="m-small">${t('calCount', { n: offsets.length, total: TOTAL })}</div>${res}</div>`;
-    };
-    this.open(`<h2>${t('calTitle')}</h2>`, [], { back: () => this.options(), body });
-    this.extraKey = (e) => {
-      // Enter también marca el golpe: es el botón A del mando.
-      if ((e.code === 'Space' || e.code === 'Enter') && result === null) {
-        const heard = cal.heardAt(e.timeStamp);
-        const near = cal.times.reduce((a, b) => (Math.abs(b - heard) < Math.abs(a - heard) ? b : a));
-        if (Math.abs(near - heard) < 0.3) offsets.push(heard - near);
-        if (offsets.length >= TOTAL - 2 || heard > cal.times[cal.times.length - 1] + 0.5) {
-          // Mediana de lo pulsado, sin los dos primeros golpes (el oído aún se está situando).
-          const used = offsets.slice(2).sort((a, b) => a - b);
-          result = used.length ? Math.round(used[Math.floor(used.length / 2)] * 1000) : 0;
-        }
-        return true;
-      }
-      // Se confirma cuando ya han sonado todos los golpes: así un golpe de más con A no guarda sin querer.
-      if (e.code === 'Enter' && result !== null && cal.heardAt(e.timeStamp) > cal.times[cal.times.length - 1] + 0.3) {
-        save.latencyMs = result;
-        persist();
-        this.options();
-        return true;
-      }
-      return false;
-    };
   }
 
   // ---------- Piezas ----------
@@ -484,11 +452,6 @@ export class Menus {
     persist();
   }
 
-  private changeLatency(d: number): void {
-    save.latencyMs = Math.max(-200, Math.min(400, save.latencyMs + d));
-    persist();
-  }
-
   private move(d: number): void {
     if (!this.rows.length) return;
     this.focus = (this.focus + d + this.rows.length) % this.rows.length;
@@ -534,6 +497,8 @@ export class Menus {
 
   /** Teclas que sirven ahora mismo, siempre en la misma esquina; cambian según la fila. */
   private legend(): string {
+    // Con el dedo no hay teclas que enseñar: solo un botón para volver, arriba a la derecha.
+    if (usingTouch()) return this.back ? `<div class="m-legend"><span class="m-back">‹ ${t('navBack')}</span></div>` : '';
     const row = this.rows[this.focus];
     const keys: [string[], string][] = [];
     if (this.rows.length > 1) keys.push([['↑', '↓'], t('navMove')]);

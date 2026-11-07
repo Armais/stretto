@@ -55,7 +55,9 @@ export class Stage {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // En el móvil, como mucho 1,5: son un 44 % menos de píxeles que a 2, para la escena y el bloom.
+    const coarse = matchMedia('(pointer: coarse)').matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, coarse ? 1.5 : 2));
     // Neutral conserva el color de los neones; ACES los lleva a blanco.
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     container.appendChild(this.renderer.domElement);
@@ -122,6 +124,19 @@ export class Stage {
 
   render(): void {
     this.composer.render();
+  }
+
+  /**
+   * Compila por detrás los shaders de lo que hay en escena. Si no, cada material nuevo se
+   * compila al pintarlo por primera vez y para el hilo principal (hasta 1,3 s con el escenario).
+   */
+  warm(): void {
+    // La escena se pinta en la textura del bloom, no en pantalla: con otro destino el shader
+    // sale distinto (sin tone mapping) y habría que compilarlo otra vez al pintar.
+    const prev = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.composer.readBuffer);
+    this.renderer.compileAsync(this.scene, this.camera).catch(() => undefined);
+    this.renderer.setRenderTarget(prev);
   }
 
   private resize(): void {

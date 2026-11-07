@@ -110,15 +110,15 @@ export function playBoot(mixer: Mixer): Promise<void> {
     let sound: AudioBuffer | null = null;
     let voice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
     let soundTried = false;
-    let start = -1;
+    // El tiempo del logo avanza con cada fotograma, como mucho 0,1 s de golpe (como en Orbit
+    // Rivals): un fotograma que tarde lo frena un momento, pero no se salta ningún destello.
+    let t = 0;
+    let last = -1;
     let done = false;
 
     mixer.resume();
     void loadLogo()
-      .then((l) => {
-        logo = l;
-        start = performance.now();
-      })
+      .then((l) => (logo = l))
       .catch((e) => {
         console.warn('Logo del estudio sin cargar:', e);
         finish(false);
@@ -126,8 +126,6 @@ export function playBoot(mixer: Mixer): Promise<void> {
     void loadSound(mixer.ctx)
       .then((b) => (sound = b))
       .catch((e) => console.warn('Sonido del logo sin cargar:', e));
-
-    const elapsed = () => (start < 0 ? 0 : (performance.now() - start) / 1000);
 
     function stopSound(fadeMs: number): void {
       if (!voice) return;
@@ -151,16 +149,21 @@ export function playBoot(mixer: Mixer): Promise<void> {
     function onKey(e: KeyboardEvent): void {
       e.stopImmediatePropagation();
       if (e.repeat) return;
-      if (elapsed() > 0.3) finish(true);
+      if (t > 0.3) finish(true);
     }
     window.addEventListener('keydown', onKey, true);
-    canvas.addEventListener('pointerdown', () => {
-      if (elapsed() > 0.3) finish(true);
+    // Con el clic (al soltar) y no al tocar: si el logo se quitara al tocar, al levantar el dedo
+    // el clic caería en el menú de detrás y elegiría «Jugar».
+    canvas.addEventListener('click', () => {
+      if (t > 0.3) finish(true);
     });
 
-    function frame(): void {
+    function frame(now: number): void {
       if (done) return;
-      const t = elapsed();
+      if (logo) {
+        if (last >= 0) t += Math.min(0.1, Math.max(0, (now - last) / 1000));
+        last = now;
+      }
       // Con el audio aún bloqueado por el navegador no suena: si se lanzara, se oiría luego en el menú.
       if (!soundTried && sound && logo && t >= SFX_AT && mixer.ctx.state === 'running') {
         soundTried = true;

@@ -14,9 +14,11 @@ import { barDuration, sectionAt } from './game/song';
 import { VEHICLES, vehicleById, type Vehicle, type VehicleId } from './game/vehicles';
 import { setLang, t, type TextKey } from './i18n';
 import { startGamepad } from './input/gamepad';
+import { usingTouch, watchTouch } from './input/touch';
 import { playBoot } from './ui/boot';
 import { Hud } from './ui/hud';
 import { Menus } from './ui/menus';
+import { TouchPad, type PadAction } from './ui/touchpad';
 import { PlayerCar } from './world/car';
 import { CueLines } from './world/cues';
 import { Pickups } from './world/pickups';
@@ -84,8 +86,8 @@ const menus = new Menus(container, {
   settingsChanged: () => {
     mixer.setVolumes(save.musicVolume, save.sfxVolume);
     hud.relabel();
+    touchPad.relabel();
   },
-  calibrationClicks: () => calibrationClicks(),
   saveRecord: (name) => {
     if (!race) return;
     addRecord(playingId(), save.difficulty, {
@@ -98,6 +100,10 @@ const menus = new Menus(container, {
     });
   },
 });
+const touchPad = new TouchPad(container, (a, at) => raceInput(a, at), () => {
+  if (phase === 'racing' && !menus.active) pauseRace();
+});
+watchTouch();
 
 const gearSpeed = (gear: number): number =>
   WORLD.speedFirstGear + ((WORLD.speedTopGear - WORLD.speedFirstGear) * (gear - 1)) / (vehicle.gears - 1);
@@ -135,6 +141,9 @@ function buildWorld(lvl: LevelDef): void {
   neonMaterial.color.set(lvl.accent).multiplyScalar(2.2);
   stage.setLook(city.look);
   road.setLook(city.look.lamps, city.look.ground, city.look.groundY);
+  // Doblados ya: si se pintan antes rectos, cada material se compila dos veces.
+  bendObject(stage.scene);
+  if (booting) stage.warm();
 }
 let lastWidth = road.width;
 
@@ -451,31 +460,12 @@ function messages(r: Race, songT: number): void {
   if (level.id !== 1 || save.passed.includes(1)) return;
   const firstUp = r.cues.find((c) => c.dir === 1);
   const firstDown = r.cues.find((c) => c.dir === -1);
-  if (firstUp) once('tutUp', firstUp.time - 3.5, () => hud.hint(t('tutUp'), 4));
-  once('tutLane', 9, () => hud.hint(t('tutLane'), 3.5));
-  if (firstDown) once('tutDown', firstDown.time - 3.5, () => hud.hint(t('tutDown'), 4));
+  // Con el dedo, los textos hablan de los botones de la pantalla en vez de las teclas.
+  const tp = usingTouch() ? 'Touch' : '';
+  if (firstUp) once('tutUp', firstUp.time - 3.5, () => hud.hint(t(`tutUp${tp}` as TextKey), 4));
+  once('tutLane', 9, () => hud.hint(t(`tutLane${tp}` as TextKey), 3.5));
+  if (firstDown) once('tutDown', firstDown.time - 3.5, () => hud.hint(t(`tutDown${tp}` as TextKey), 4));
   once('tutPickup', 24, () => hud.hint(t('tutPickup'), 4));
-}
-
-/** Golpes de metrónomo para calibrar la latencia: 12 a 100 BPM. */
-function calibrationClicks(): { times: number[]; heardAt: (perfMs: number) => number } {
-  mixer.resume();
-  const ctx = mixer.ctx;
-  const start = ctx.currentTime + 1;
-  const times: number[] = [];
-  for (let i = 0; i < 12; i++) {
-    const at = start + i * 0.6;
-    times.push(at);
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.frequency.value = i % 4 === 0 ? 1320 : 880;
-    g.gain.setValueAtTime(0.5, at);
-    g.gain.exponentialRampToValueAtTime(0.001, at + 0.08);
-    osc.connect(g).connect(mixer.sfx);
-    osc.start(at);
-    osc.stop(at + 0.1);
-  }
-  return { times, heardAt: (perfMs) => clock.heardAt(perfMs) };
 }
 
 window.addEventListener('keydown', (e) => {
@@ -485,25 +475,24 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (phase !== 'racing' || !race || e.repeat) return;
-  const judged = (perf: number) => songTime(perf) - save.latencyMs / 1000;
   switch (e.code) {
     case 'ShiftRight':
     case 'ArrowUp':
     case 'KeyW':
-      race.shift(1, judged(e.timeStamp));
+      raceInput('up', e.timeStamp);
       break;
     case 'ShiftLeft':
     case 'ArrowDown':
     case 'KeyS':
-      race.shift(-1, judged(e.timeStamp));
+      raceInput('down', e.timeStamp);
       break;
     case 'ArrowLeft':
     case 'KeyA':
-      car.steer(-1);
+      raceInput('left', e.timeStamp);
       break;
     case 'ArrowRight':
     case 'KeyD':
-      car.steer(1);
+      raceInput('right', e.timeStamp);
       break;
     case 'Escape':
     case 'KeyP':
@@ -518,11 +507,27 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 window.addEventListener('pointerdown', () => mixer.resume());
+// En el móvil el audio solo se desbloquea al levantar el dedo (al tocar no cuenta como gesto).
+window.addEventListener('pointerup', () => mixer.resume());
+window.addEventListener('touchend', () => mixer.resume());
+// Girar el móvil a vertical en plena carrera la pausa: en vertical solo se ve el aviso de girarlo.
+matchMedia('(orientation: portrait)').addEventListener('change', (e) => {
+  if (e.matches && usingTouch() && phase === 'racing' && !menus.active) pauseRace();
+});
+
+/** Marchas y carril, con teclado, mando o pantalla. `at`: cuándo se pulsó (escala de performance.now()). */
+function raceInput(a: PadAction, at: number): void {
+  if (phase !== 'racing' || !race) return;
+  if (a === 'up' || a === 'down') race.shift(a === 'up' ? 1 : -1, songTime(at));
+  else car.steer(a === 'left' ? -1 : 1);
+}
 // El mando llega como teclas: en carrera los gatillos cambian de marcha y Start pausa.
 startGamepad(() => (phase === 'paused' ? 'pause' : phase === 'racing' && !menus.active ? 'race' : 'menu'));
 
 let lastFrame = performance.now();
 let bendClock = 0;
+/** Mientras el logo del estudio tapa la pantalla, la escena no se pinta: solo se compila. */
+let booting = true;
 
 function frame(now: number): void {
   const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
@@ -536,7 +541,7 @@ function frame(now: number): void {
   let nitro = 0;
 
   if (phase === 'paused') {
-    stage.render();
+    if (!booting) stage.render();
     requestAnimationFrame(frame);
     return;
   }
@@ -589,6 +594,7 @@ function frame(now: number): void {
   if (bendClock <= 0) {
     // Los materiales nuevos (líneas, coches que acaban de cargar) se preparan para doblarse.
     bendObject(stage.scene);
+    if (booting) stage.warm();
     bendClock = 1;
   }
 
@@ -610,7 +616,8 @@ function frame(now: number): void {
     multiplier: race?.multiplier ?? 1,
     nitro,
   });
-  stage.render();
+  touchPad.setVisible(phase === 'racing' && !menus.active);
+  if (!booting) stage.render();
   requestAnimationFrame(frame);
 }
 
@@ -655,8 +662,12 @@ if (import.meta.env.DEV) {
 
 hud.setVisible(false);
 menus.title();
-// El logo del estudio tapa el título hasta que acaba o se salta.
-void playBoot(mixer);
+// El logo del estudio tapa el título hasta que acaba o se salta. Antes, un fotograma con lo que
+// ya hay (compila el bloom y la escena inicial) mientras la pantalla aún está vacía; durante el
+// logo no se pinta nada más, para que no se quede a tirones.
+bendObject(stage.scene);
+stage.render();
+void playBoot(mixer).then(() => (booting = false));
 requestAnimationFrame(frame);
 // El fondo del título se rehace con las piezas de Blender en cuanto llegan.
 void loadProps(level.scenery)

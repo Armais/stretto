@@ -4,7 +4,8 @@ import { bendMaterial } from './curve';
 import type { Road } from './road';
 
 // Líneas de cambio pintadas en el asfalto (P1): azules para subir, rojas para bajar.
-// Llegan al morro del coche justo en el tiempo fuerte.
+// Llegan a la trasera del coche justo en el tiempo fuerte: el morro queda tapado por la
+// carrocería y lo que el jugador ve es la línea pasando por debajo del coche.
 
 // Tono de pintura reflectante más que de neón; lo justo para leerse de lejos con niebla.
 const UP = new THREE.Color(0x3d8bff);
@@ -27,11 +28,11 @@ export class CueLines {
   /** Las anteriores ya quedaron atrás y no vuelven. */
   private first = 0;
   private bar: THREE.BoxGeometry;
-  /** Z del morro del coche: la línea llega ahí justo en el tiempo fuerte. */
-  private readonly frontZ: number;
+  /** Z de la trasera del coche: la línea llega ahí justo en el tiempo fuerte. */
+  private readonly hitZ: number;
 
   constructor(cues: Cue[], road: Road, halfLength: number) {
-    this.frontZ = -halfLength;
+    this.hitZ = halfLength;
     // Con la cámara baja, el fondo de la línea se aplasta mucho: por eso es tan larga.
     this.bar = new THREE.BoxGeometry(road.width, 0.04, 2.4);
     this.add(cues);
@@ -62,7 +63,7 @@ export class CueLines {
       }
       const obj = it.obj ?? this.build(it);
       const mat = it.mat!;
-      obj.position.z = this.frontZ - dist;
+      obj.position.z = this.hitZ - dist;
       // La línea ocupa siempre el mismo tiempo de recorrido: a más velocidad, más larga.
       // Con la cámara baja, si no, a 200 km/h se ve como un hilo.
       obj.scale.z = Math.max(1, speed / 38);
