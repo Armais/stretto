@@ -69,8 +69,10 @@ let lines: CueLines | null = null;
 let speed: number = WORLD.speedFirstGear;
 let distance = 0;
 let invulnerable = 0;
-let lastGear = 0;
-let lastNitro = false;
+/** Siguiente línea cuyo cambio de capas aún no está programado. */
+let layerCue = 0;
+/** Pulso del nitro cuyas capas ya están programadas (-1 sin nitro). */
+let layerNitro = -1;
 let rpm = 0.2;
 /** Mensajes ya mostrados en esta carrera (radio y tutorial). */
 let shown = new Set<string>();
@@ -224,8 +226,8 @@ function launch(lvl: LevelDef, veh: Vehicle, r: Race, m: MusicPlayer, kc: Cue | 
   keyChanged = false;
   music.start(mixer.ctx.currentTime + 0.6);
   music.setLayers(race.activeLayers());
-  lastGear = race.gear;
-  lastNitro = false;
+  layerCue = 0;
+  layerNitro = -1;
   lines = new CueLines(race.cues, road, vehicle.halfLength);
   stage.scene.add(lines.group);
   bendObject(stage.scene);
@@ -373,8 +375,8 @@ function handleEvent(ev: RaceEvent): void {
   else stats[ev.type]++;
   switch (ev.type) {
     case 'shift':
-      if (ev.cue === keyCue) {
-        music?.keyChange();
+      if (ev.cue === keyCue && music) {
+        music.keyChange(keyChangeAt(ev.cue, music));
         keyChanged = true;
       }
       sfx.shift(ev.quality === 'perfect');
@@ -426,6 +428,46 @@ function targetRpm(r: Race, songT: number): number {
   return next.dir === 1 ? 0.3 + 0.7 * curve : 0.8 - 0.68 * curve;
 }
 
+/**
+ * Las capas siguen las líneas, no las teclas: cada cambio se programa en el reloj de audio
+ * para que caiga en el tiempo fuerte de su línea, se acierte o no (una línea fallada también
+ * cambia la marcha sola). Esperar a la pulsación lo dejaba 50-150 ms tarde (latencia de
+ * salida, un fotograma y el propio jugador): la nota del tiempo fuerte arrancaba y se
+ * cortaba, o la capa entraba a media nota, y la canción sonaba a trozos.
+ */
+const LAYER_AHEAD = 0.3;
+
+function scheduleLayers(r: Race, m: MusicPlayer): void {
+  const now = mixer.ctx.currentTime;
+  if (r.nitroFrom !== layerNitro) {
+    layerNitro = r.nitroFrom;
+    if (layerNitro >= 0) {
+      // El nitro abre la mezcla en su pulso; lo programado después se anula y se rehace.
+      m.setLayers(new Set(LAYERS), Math.max(now, m.startTime + layerNitro));
+      while (layerCue > 0 && r.cues[layerCue - 1].time >= layerNitro) layerCue--;
+    }
+  }
+  const horizon = now - m.startTime + LAYER_AHEAD;
+  while (layerCue < r.cues.length && r.cues[layerCue].time <= horizon) {
+    const c = r.cues[layerCue++];
+    // Hasta su línea, el nitro deja sonar todas las capas.
+    const nitro = r.nitroFrom >= 0 && c.time >= r.nitroFrom && c.time < r.nitroUntil();
+    m.setLayers(nitro ? new Set(LAYERS) : r.layersFor(c.targetGear), Math.max(now, m.startTime + c.time));
+  }
+}
+
+/**
+ * La subida de tono cae en el tiempo fuerte de su línea si aún no ha sonado; si la pulsación
+ * llega después, en el compás siguiente, para no partir una nota por la mitad.
+ */
+function keyChangeAt(cue: Cue, m: MusicPlayer): number {
+  const bar = barDuration(level.song);
+  const soon = mixer.ctx.currentTime + 0.02;
+  let at = m.startTime + cue.time;
+  while (at < soon) at += bar;
+  return at;
+}
+
 /** Primer pulso de la canción desde `songT`: el nitro arranca ahí para que la mezcla entre a tiempo. */
 function nextBeat(songT: number): number {
   if (endless) return endless.timeline.nextBeat(songT);
@@ -435,7 +477,10 @@ function nextBeat(songT: number): number {
 
 /** Recoge un premio. El nitro arranca en el siguiente pulso y dura al menos un compás. */
 function collect(r: Race, kind: PickupKind, songT: number): void {
-  const beat = nextBeat(songT);
+  // El pulso tiene que estar aún por sonar en el reloj de audio, que va por delante de lo que
+  // se oye: si no, las capas del nitro se abrirían tarde.
+  const unplayed = music ? mixer.ctx.currentTime - music.startTime + 0.02 : songT;
+  const beat = nextBeat(Math.max(songT, unplayed));
   r.collect(kind, beat, endless ? endless.timeline.barDurAt(beat) : barDuration(level.song));
 }
 
@@ -556,12 +601,7 @@ function frame(now: number): void {
       for (const kind of pickups.update(dt, speed, car.x, race.engine, blocked)) collect(race, kind, songT);
       for (const ev of race.drainEvents()) handleEvent(ev);
       const nitroOn = race.nitroActive(songT);
-      if (race.gear !== lastGear || nitroOn !== lastNitro) {
-        // El nitro abre la mezcla: suenan todas las capas desde su pulso hasta su línea.
-        music?.setLayers(nitroOn ? new Set(LAYERS) : race.activeLayers());
-        lastGear = race.gear;
-        lastNitro = nitroOn;
-      }
+      if (music) scheduleLayers(race, music);
       nitro = race.nitroLeft(songT);
       rpm += (targetRpm(race, songT) + (nitroOn ? 0.1 : 0) - rpm) * Math.min(1, dt * 12);
       sfx.engineSet(rpm);

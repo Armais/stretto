@@ -8,11 +8,26 @@ export interface MusicPlayer {
   /** Tiempo del contexto de audio en que empieza el compás 0. */
   startTime: number;
   start(at: number): void;
-  setLayers(active: Set<Layer>): void;
+  /** Capas que suenan desde el instante `at` del reloj de audio (por defecto, ya). */
+  setLayers(active: Set<Layer>, at?: number): void;
   stop(fade?: number): void;
   stall(): void;
-  /** Subida de tono del estribillo final (P10). */
-  keyChange(): void;
+  /** Subida de tono del estribillo final (P10), desde el instante `at`. */
+  keyChange(at?: number): void;
+}
+
+/**
+ * Enciende o apaga una capa para que el cambio caiga justo en `at`: la que sale acaba de
+ * irse en los 30 ms previos y la que entra ya está arriba en el ataque del tiempo fuerte.
+ * Con `quick` sale igual de rápido que entra (fundido corto entre dos versiones de la capa).
+ * Si `at` ya ha pasado, el cambio es inmediato y algo más suave, para que no chasquee.
+ */
+export function switchGain(ctx: BaseAudioContext, p: AudioParam, on: boolean, at: number, quick = false): void {
+  const now = ctx.currentTime;
+  const late = at < now + 0.005;
+  const from = Math.max(now, at - (on || quick ? 0.004 : 0.03));
+  p.cancelScheduledValues(from);
+  p.setTargetAtTime(on ? 1 : 0, from, late ? 0.02 : on || quick ? 0.003 : 0.008);
 }
 
 /** Pistas normales y, si las hay, las del estribillo final 2 semitonos más arriba. */
@@ -72,8 +87,10 @@ export class StemMusic implements MusicPlayer {
   private readonly keyGains = new Map<Layer, GainNode>();
   private sources: AudioBufferSourceNode[] = [];
   private readonly keyAt: number;
-  private keyOn = false;
-  private active = new Set<Layer>();
+  /** Instante de audio desde el que suenan las pistas subidas de tono (Infinity: aún no). */
+  private keyFrom = Infinity;
+  /** Cambios de capas programados, para rehacer los posteriores a la subida de tono. */
+  private plan: { at: number; active: Set<Layer> }[] = [];
 
   /** `keyAt`: segundos desde el compás 0 hasta el estribillo final. */
   constructor(mixer: Mixer, buffers: StemBuffers, keyAt: number) {
@@ -113,20 +130,30 @@ export class StemMusic implements MusicPlayer {
     for (const [layer, buffer] of this.buffers.key) play(buffer, this.keyGains.get(layer)!, at + this.keyAt);
   }
 
-  setLayers(active: Set<Layer>, ramp = 0.02): void {
-    this.active = active;
-    const now = this.ctx.currentTime;
-    for (const [layer, g] of this.gains) {
-      const toKey = this.keyOn && this.keyGains.has(layer);
-      g.gain.setTargetAtTime(active.has(layer) && !toKey ? 1 : 0, now, ramp);
-      this.keyGains.get(layer)?.gain.setTargetAtTime(active.has(layer) && toKey ? 1 : 0, now, ramp);
-    }
+  setLayers(active: Set<Layer>, at = this.ctx.currentTime): void {
+    // Lo que hubiera programado desde `at` queda anulado (switchGain lo cancela).
+    this.plan = this.plan.filter((p) => p.at < at && p.at > this.ctx.currentTime - 10);
+    this.plan.push({ at, active });
+    this.apply(active, at, false);
   }
 
-  keyChange(): void {
-    if (this.keyOn || this.keyGains.size === 0) return;
-    this.keyOn = true;
-    this.setLayers(this.active, 0.01);
+  keyChange(at = this.ctx.currentTime): void {
+    if (this.keyFrom !== Infinity || this.keyGains.size === 0) return;
+    this.keyFrom = at;
+    const before = this.plan.filter((p) => p.at <= at);
+    const later = this.plan.filter((p) => p.at > at);
+    // Fundido corto de cada capa a su versión subida, y se rehace lo programado después.
+    this.apply(before.length ? before[before.length - 1].active : new Set(), at, true);
+    for (const p of later) this.apply(p.active, p.at, false);
+  }
+
+  private apply(active: Set<Layer>, at: number, quick: boolean): void {
+    for (const [layer, g] of this.gains) {
+      const key = at >= this.keyFrom && this.keyGains.has(layer);
+      switchGain(this.ctx, g.gain, active.has(layer) && !key, at, quick);
+      const k = this.keyGains.get(layer);
+      if (k) switchGain(this.ctx, k.gain, active.has(layer) && key, at, quick);
+    }
   }
 
   stop(fade = 0.05): void {

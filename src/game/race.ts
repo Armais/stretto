@@ -111,10 +111,20 @@ export class Race {
   }
 
   activeLayers(): Set<Layer> {
+    return this.layersFor(this.gear);
+  }
+
+  /** Capas que suenan en la marcha `gear`. */
+  layersFor(gear: number): Set<Layer> {
     const table = LAYERS_BY_GEAR[this.vehicle.gears];
     const set = new Set<Layer>();
-    for (let i = 0; i < this.gear; i++) for (const layer of table[i]) set.add(layer);
+    for (let i = 0; i < gear; i++) for (const layer of table[i]) set.add(layer);
     return set;
+  }
+
+  /** Tiempo de la línea que cierra el nitro en marcha (endTime si dura hasta el final). */
+  nitroUntil(): number {
+    return this.nitroCue?.time ?? this.endTime;
   }
 
   nextCue(): Cue | undefined {

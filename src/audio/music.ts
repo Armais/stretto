@@ -1,6 +1,7 @@
 import { LAYERS, type Layer } from '../config';
 import { barDuration, type SongDef } from '../game/song';
 import type { Mixer } from './mixer';
+import { switchGain } from './stems';
 
 // Música PROVISIONAL sintetizada en el navegador, solo para probar el bucle de capas.
 // La definitiva se graba con Sonic Pi.
@@ -97,10 +98,9 @@ export class Music {
     this.timer = window.setInterval(() => this.tick(), 25);
   }
 
-  /** Enciende las capas de la marcha actual y apaga el resto. */
-  setLayers(active: Set<Layer>): void {
-    const now = this.ctx.currentTime;
-    for (const [layer, g] of this.layerGain) g.gain.setTargetAtTime(active.has(layer) ? 1 : 0, now, 0.02);
+  /** Enciende las capas de la marcha y apaga el resto, desde el instante `at`. */
+  setLayers(active: Set<Layer>, at = this.ctx.currentTime): void {
+    for (const [layer, g] of this.layerGain) switchGain(this.ctx, g.gain, active.has(layer), at);
   }
 
   /** Se apaga la música. `fade` en segundos. */

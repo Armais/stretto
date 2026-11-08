@@ -2,7 +2,7 @@ import { LAYERS, type Layer } from '../config';
 import { BLOCK_STARTS, type EndlessTimeline, type Station } from '../game/endless';
 import { LEVELS } from '../game/levels';
 import type { Mixer } from './mixer';
-import { fetchLayer, type MusicPlayer } from './stems';
+import { fetchLayer, switchGain, type MusicPlayer } from './stems';
 
 // Música del modo infinito (P11). Cada bloque de 8 compases es su propio fichero
 // (public/music/endless, cortado por tools/sonicpi/stems.py blocks): decodificar la canción
@@ -83,9 +83,8 @@ export class EndlessMusic implements MusicPlayer {
     this.sources = this.sources.filter((s) => s.endsAt > this.ctx.currentTime);
   }
 
-  setLayers(active: Set<Layer>, ramp = 0.02): void {
-    const now = this.ctx.currentTime;
-    for (const [layer, g] of this.gains) g.gain.setTargetAtTime(active.has(layer) ? 1 : 0, now, ramp);
+  setLayers(active: Set<Layer>, at = this.ctx.currentTime): void {
+    for (const [layer, g] of this.gains) switchGain(this.ctx, g.gain, active.has(layer), at);
   }
 
   /** En el infinito no hay subida de tono: la aceleración ya sube un poco el tono. */
