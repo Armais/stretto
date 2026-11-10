@@ -5,10 +5,11 @@ import { Mixer } from './audio/mixer';
 import { Music } from './audio/music';
 import { StemMusic, dropStems, loadStems, type MusicPlayer, type StemBuffers } from './audio/stems';
 import { ENGINES, Sfx } from './audio/sfx';
-import { LAYERS, PICKUPS, TRAFFIC, WORLD, type PickupKind } from './config';
-import { EndlessTimeline, LAP, type Station } from './game/endless';
+import { LAYERS, PICKUPS, TRAFFIC, WORLD, type Difficulty, type PickupKind } from './config';
+import { EndlessTimeline, LAP, stationSpans, type Station } from './game/endless';
 import { ENDLESS_ID, LEVELS, type LevelDef } from './game/levels';
 import { Race, type Cue, type RaceEvent } from './game/race';
+import { Approach, writeTraffic, type TrafficGroup, type TrafficSpan } from './game/trafficChart';
 import { addRecord, levelUnlocked, markPassed, qualifies, save, vehicleUnlocked } from './game/save';
 import { barDuration, sectionAt } from './game/song';
 import { VEHICLES, vehicleById, type Vehicle, type VehicleId } from './game/vehicles';
@@ -68,6 +69,8 @@ let startToken = 0;
 let lines: CueLines | null = null;
 let speed: number = WORLD.speedFirstGear;
 let distance = 0;
+/** Cómo se acerca el tráfico en esta carrera. */
+let approach: Approach | null = null;
 let invulnerable = 0;
 /** Siguiente línea cuyo cambio de capas aún no está programado. */
 let layerCue = 0;
@@ -118,6 +121,27 @@ function trafficFor(lvl: LevelDef, lap: number): [number, number] {
   const diff = TRAFFIC.byDifficulty[save.difficulty];
   return [diff.gap * lvl.trafficGap * Math.pow(LAP.trafficGap, lap), Math.min(0.9, diff.pairs * lvl.trafficPairs + LAP.pairs * lap)];
 }
+
+const DIFFICULTY_SEED: Record<Difficulty, number> = { easy: 0, normal: 1, hard: 2 };
+
+/** Grupos de coches de unos tramos de música: siempre los mismos para esa semilla y dificultad. */
+function writeGroups(spans: TrafficSpan[], lvl: LevelDef, lap: number, seed: number): TrafficGroup[] {
+  const [gapScale, pairChance] = trafficFor(lvl, lap);
+  return writeTraffic(spans, { lanes: lvl.lanes, gapScale, pairChance, seed: seed * 10 + DIFFICULTY_SEED[save.difficulty] });
+}
+
+function songGroups(lvl: LevelDef): TrafficGroup[] {
+  const barDur = barDuration(lvl.song);
+  let bar = 0;
+  const spans = lvl.song.sections.map(([section, bars]): TrafficSpan => {
+    const span = { section, start: bar * barDur, bars, barDur };
+    bar += bars;
+    return span;
+  });
+  return writeGroups(spans, lvl, 0, lvl.id);
+}
+
+const stationGroups = (st: Station): TrafficGroup[] => writeGroups(stationSpans(st), st.level, st.lap, 100 + st.n);
 
 const clockText = (sec: number): string => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
@@ -232,7 +256,8 @@ function launch(lvl: LevelDef, veh: Vehicle, r: Race, m: MusicPlayer, kc: Cue | 
   stage.scene.add(lines.group);
   bendObject(stage.scene);
 
-  traffic.reset(road, ...trafficFor(level, 0));
+  approach = new Approach(r.cues, gearSpeed);
+  traffic.reset(road, endless ? stationGroups(endless.timeline.stations[0]) : songGroups(level), approach);
   pickups.reset(road);
   car.setup(road, vehicle);
   car.reset();
@@ -273,7 +298,7 @@ function switchStation(r: Race, st: Station): void {
   const lanesBefore = road.laneCount;
   level = st.level;
   buildWorld(level);
-  traffic.reset(road, ...trafficFor(level, st.lap));
+  traffic.reset(road, stationGroups(st), approach);
   pickups.reset(road);
   car.setup(road, vehicle);
   if (road.laneCount !== lanesBefore) car.reset();
@@ -321,7 +346,7 @@ function endRace(r: Race, songT: number): void {
   // Las líneas que quedaban se amontonarían sobre el coche parado, y el tráfico lo
   // atravesaría: la carretera se vacía bajo la pantalla de resultados.
   if (lines) lines.group.visible = false;
-  traffic.reset(road, 1, 0);
+  traffic.reset(road);
   pickups.reset(road);
   const finished = r.result === 'finished';
   if (finished) {
@@ -380,6 +405,7 @@ function handleEvent(ev: RaceEvent): void {
         keyChanged = true;
       }
       sfx.shift(ev.quality === 'perfect');
+      if (ev.raised) sfx.pickup('multiplier');
       // El cambio que cierra un nitro vale el doble, y se dice.
       hud.judge((ev.quality === 'perfect' ? t('perfect') : t('good')) + (ev.nitro ? ' ×2' : ''), ev.quality);
       stage.kick(ev.quality === 'perfect' ? 0.3 : 0.15);
@@ -410,7 +436,7 @@ function handleEvent(ev: RaceEvent): void {
             ? t('pickNitro')
             : ev.kind === 'repair'
               ? t('pickRepair')
-              : t('pickMultiplier');
+              : `×${race?.multiplier ?? 1}`;
       hud.judge(text, 'perfect');
       if (ev.kind === 'nitro') stage.kick(0.4);
       break;
@@ -596,7 +622,7 @@ function frame(now: number): void {
       endlessStep(race, songT);
       race.update(songT);
       invulnerable = Math.max(0, invulnerable - dt);
-      if (traffic.update(dt, speed, car.x, invulnerable <= 0, vehicle)) race.crash();
+      if (traffic.update(songT, dt, speed, car.x, invulnerable <= 0, vehicle)) race.crash();
       const blocked = (lane: number, z: number) => traffic.snapshot().some((c) => c.lane === lane && Math.abs(c.z - z) < 25);
       for (const kind of pickups.update(dt, speed, car.x, race.engine, blocked)) collect(race, kind, songT);
       for (const ev of race.drainEvents()) handleEvent(ev);

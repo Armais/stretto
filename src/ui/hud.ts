@@ -163,7 +163,11 @@ export class Hud {
       this.nextEl.setAttribute('class', `tach-next ${s.nextDir === 1 ? 'up' : 'down'}`);
     }
     this.nextEl.style.opacity = (0.15 + 0.85 * s.nextNear).toFixed(2);
-    if (l.multiplier !== s.multiplier) this.multEl.classList.toggle('on', s.multiplier > 1);
+    if (l.multiplier !== s.multiplier) {
+      this.multEl.classList.toggle('on', s.multiplier > 1);
+      if (s.multiplier > 1) this.multEl.textContent = `×${s.multiplier}`;
+      if (s.multiplier > (l.multiplier ?? 1)) this.multEl.animate([{ transform: 'scale(1.6)' }, { transform: 'scale(1)' }], 260);
+    }
     this.nitroEl.classList.toggle('on', s.nitro > 0);
     if (s.nitro > 0) this.nitroFill.style.width = `${Math.round(s.nitro * 100)}%`;
     this.last = { ...s };

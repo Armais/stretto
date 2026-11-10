@@ -18,8 +18,9 @@ you have to do it right as you cross them, on the beat of the song.
 - **Blue line:** shift up as you cross it.
 - **Red line:** shift down.
 - **Traffic:** change lanes to dodge it.
-- **Pickups:** nitro, repair, extra points and a ×2 multiplier. Nitro lasts until the next line,
-  and that shift is worth double.
+- **Streak:** every 5 good shifts in a row raise the multiplier, up to ×4. A mistake resets it.
+- **Pickups:** nitro, repair, extra points and a multiplier step. Nitro lasts until the next
+  line, and that shift is worth double.
 
 Shifting late or early grinds the gears, missing a line over-revs or lugs the engine, and
 crashing hurts it even more. Perfect shifts patch it up a little. If the engine gives out, you

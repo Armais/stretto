@@ -17,7 +17,22 @@ export interface SongDef {
   stems?: string;
   /** Secciones de la canción (las mismas que su .rb): curvas en los breaks, etc. */
   sections: [Section, number][];
+  /** Dibujo de las líneas de esta canción, sección a sección. */
+  draw: ChartDraw;
 }
+
+/**
+ * Cómo se dibujan las líneas de una sección. Los compases cuentan desde su primer compás y las
+ * fracciones son tiempos: 2.5 es el tiempo 3 del tercer compás.
+ */
+export interface SectionDraw {
+  /** Sube desde el principio cada `every` compases hasta la marcha `to`, en los `within` primeros. */
+  climb?: { every: number; to: number; within?: number };
+  /** Golpes a partir de `from`, repetidos cada `cycle` compases (sin `cycle`, una vez). */
+  hits?: { from?: number; cycle?: number; at: [number, 1 | -1][] };
+}
+
+export type ChartDraw = Partial<Record<Section, SectionDraw>>;
 
 /** Sección en la que cae un compás. */
 export function sectionAt(song: SongDef, bar: number): { section: Section; index: number } {
@@ -33,35 +48,33 @@ export function sectionAt(song: SongDef, bar: number): { section: Section; index
 
 export type Section = 'intro' | 'verse' | 'pre' | 'chorus' | 'break' | 'build' | 'bridge' | 'final' | 'outro';
 
-/**
- * Líneas de cambio a partir de las secciones de una canción (las mismas que usa su .rb en
- * tools/sonicpi/songs). Reglas para un coche de 5 marchas, empezando en 1.ª:
- * estrofa sube cada 2 compases hasta 4.ª y luego oscila; pre y subida suben cada compás;
- * estribillo arranca en 5.ª con golpes de bajar y subir; el final sube a 5.ª en sus dos
- * primeros compases (va siempre tras un puente); break baja cada 2 compases;
- * puente baja dos y sube una; outro baja cada 2.
- */
-export function cuesFromSections(sections: [Section, number][]): ShiftCueDef[] {
+/** Líneas de cambio para un coche de 5 marchas, empezando en 1.ª. */
+export function cuesFromSections(sections: [Section, number][], draw: ChartDraw): ShiftCueDef[] {
   const w = new CueWriter();
   let bar = 0;
   for (const [sec, len] of sections) {
-    w.section(sec, bar, len);
+    w.section(sec, bar, len, draw);
     bar += len;
   }
   return w.drain();
 }
 
 /**
- * Las reglas de cuesFromSections sección a sección, recordando la marcha entre llamadas.
- * El modo infinito la usa para ir encadenando bloques sin fin.
+ * Escribe las líneas sección a sección, recordando la marcha entre llamadas. El modo infinito
+ * la usa para ir encadenando bloques sin fin.
  */
 export class CueWriter {
   private g = 1;
   private lastBar = -1;
   private out: ShiftCueDef[] = [];
 
-  /** Sección `sec` de `len` compases que empieza en el compás `bar`. */
-  section(sec: Section, bar: number, len: number): void {
+  /**
+   * Sección `sec` de `len` compases que empieza en el compás `bar`. `cut`: compases que le faltan
+   * por delante (el modo infinito los quita), para que los golpes sigan cayendo donde la música.
+   */
+  section(sec: Section, bar: number, len: number, draw: ChartDraw, cut = 0): void {
+    const d = draw[sec];
+    if (!d) return;
     const end = bar + len;
     const step = (at: number, dir: 1 | -1) => {
       if (this.g + dir < 1 || this.g + dir > 5) return;
@@ -70,50 +83,15 @@ export class CueWriter {
       this.lastBar = at;
       this.g += dir;
     };
-    const climb = (from: number, to: number, every: number, target: number) => {
-      for (let b = from; b < to && this.g < target; b += every) step(b, 1);
-    };
-    switch (sec) {
-      case 'verse':
-        climb(bar, end, 2, 4);
-        for (let b = bar + 2 * (4 - 1); b + 1 < end; b += 4) {
-          step(b, -1);
-          step(b + 2, 1);
-        }
-        break;
-      case 'pre':
-      case 'build':
-        climb(bar, end, 1, 5);
-        break;
-      case 'chorus':
-        climb(bar, bar + 1, 1, 5);
-        for (let b = bar + 2; b + 1 < end; b += 4) {
-          step(b, -1);
-          step(b + 1, 1);
-        }
-        break;
-      case 'final':
-        // El estribillo final llega a la marcha más alta en sus dos primeros compases: ese
-        // cambio es el que decide la subida de tono (P10). Siempre va tras un puente.
-        climb(bar, bar + 2, 1, 5);
-        for (let b = bar + 3; b + 1 < end; b += 4) {
-          step(b, -1);
-          step(b + 1, 1);
-        }
-        break;
-      case 'break':
-        for (let b = bar; b < end; b += 2) step(b, -1);
-        break;
-      case 'bridge':
-        step(bar, -1);
-        if (bar + 2 < end) step(bar + 2, -1);
-        if (bar + 4 < end) step(bar + 4, 1);
-        break;
-      case 'outro':
-        for (let b = bar; b < end; b += 2) step(b, -1);
-        break;
-      case 'intro':
-        break;
+    if (d.climb) {
+      const stop = Math.min(end, bar + (d.climb.within ?? len));
+      for (let b = bar; b < stop && this.g < d.climb.to; b += d.climb.every) step(b, 1);
+    }
+    if (d.hits) {
+      const { from = 0, cycle = Infinity, at } = d.hits;
+      for (let b = bar - cut + from; b < end; b += cycle) {
+        for (const [off, dir] of at) if (b + off >= bar && b + off < end) step(b + off, dir);
+      }
     }
   }
 
@@ -126,7 +104,7 @@ export class CueWriter {
 }
 
 /** Canción grabada a partir de sus secciones (las mismas que su .rb). */
-export function songFromSections(bpm: number, sections: [Section, number][], stems: string): SongDef {
+export function songFromSections(bpm: number, sections: [Section, number][], stems: string, draw: ChartDraw): SongDef {
   let bar = 0;
   let finalChorusBar = 0;
   let breakBar = 0;
@@ -135,17 +113,24 @@ export function songFromSections(bpm: number, sections: [Section, number][], ste
     if (sec === 'break' && !breakBar) breakBar = bar;
     bar += len;
   }
-  return { bpm, bars: bar, finalChorusBar, breakBar, cues: cuesFromSections(sections), stems, sections };
-}
-
-/** Varias líneas seguidas en el mismo sentido. */
-function cueRun(bars: number[], dir: 1 | -1): ShiftCueDef[] {
-  return bars.map((bar) => ({ bar, dir }));
+  return { bpm, bars: bar, finalChorusBar, breakBar, cues: cuesFromSections(sections, draw), stems, sections, draw };
 }
 
 export function barDuration(song: SongDef): number {
   return (60 / song.bpm) * 4;
 }
+
+const PROTO_SECTIONS: [Section, number][] = [['intro', 2], ['verse', 12], ['pre', 2], ['chorus', 8], ['break', 8], ['build', 4], ['chorus', 4], ['bridge', 6], ['final', 8]];
+// 28 líneas: una cada 2 compases de media, con golpes de bajar y subir en los estribillos.
+const PROTO_DRAW: ChartDraw = {
+  verse: { climb: { every: 2, to: 4 }, hits: { at: [[6, -1], [8, 1], [10, 1]] } },
+  pre: { hits: { at: [[0, -1]] } },
+  chorus: { climb: { every: 1, to: 5, within: 2 }, hits: { from: 2, cycle: 4, at: [[0, -1], [1, 1]] } },
+  break: { hits: { cycle: 2, at: [[0, -1]] } },
+  build: { climb: { every: 1, to: 4 } },
+  bridge: { hits: { at: [[0, -1], [2, -1], [4, 1]] } },
+  final: { climb: { every: 1, to: 5, within: 2 }, hits: { from: 2, at: [[0, -1], [1, 1]] } },
+};
 
 /**
  * Canción provisional del prototipo: 100 BPM, 54 compases (2 min 10 s).
@@ -156,25 +141,7 @@ export const PROTO_SONG: SongDef = {
   bars: 54,
   finalChorusBar: 46,
   breakBar: 24,
-  sections: [['intro', 2], ['verse', 12], ['pre', 2], ['chorus', 8], ['break', 8], ['build', 4], ['chorus', 4], ['bridge', 6], ['final', 8]],
-  // 28 líneas: una cada 2 compases de media, con golpes de bajar y subir en los estribillos.
-  cues: [
-    ...cueRun([2, 4, 6], 1), // entran bajo, acordes y melodía
-    { bar: 8, dir: -1 },
-    ...cueRun([10, 12], 1),
-    { bar: 14, dir: -1 },
-    { bar: 16, dir: 1 }, // primer estribillo
-    { bar: 18, dir: -1 },
-    { bar: 19, dir: 1 },
-    { bar: 22, dir: -1 },
-    { bar: 23, dir: 1 },
-    ...cueRun([24, 26, 28, 30], -1), // break hasta quedarse en batería sola
-    ...cueRun([32, 33, 34, 36], 1), // subida al segundo estribillo
-    { bar: 38, dir: -1 },
-    { bar: 39, dir: 1 },
-    ...cueRun([40, 42], -1),
-    ...cueRun([44, 46], 1), // estribillo final con solo
-    { bar: 48, dir: -1 },
-    { bar: 49, dir: 1 },
-  ],
+  sections: PROTO_SECTIONS,
+  cues: cuesFromSections(PROTO_SECTIONS, PROTO_DRAW),
+  draw: PROTO_DRAW,
 };

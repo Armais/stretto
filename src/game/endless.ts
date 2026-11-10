@@ -1,6 +1,7 @@
 import { GearMapper, LEVELS, type LevelDef } from './levels';
 import type { TimedCue } from './race';
 import { CueWriter, barDuration, type Section, type ShiftCueDef, type SongDef } from './song';
+import type { TrafficSpan } from './trafficChart';
 
 // Modo infinito (P11). Cada emisora es uno de los cinco estilos y suena como cinco bloques de
 // 8 compases sacados de las pistas grabadas de su canción: estrofa, estribillo, subida,
@@ -30,7 +31,12 @@ export interface Block {
   /** Segundos reales que dura un compás en este bloque. */
   barDur: number;
   sections: [Section, number][];
+  /** Las secciones tal como se juegan (las líneas y el tráfico). */
+  played: Played[];
 }
+
+/** Sección, compases que se juegan y compases que le faltan por delante. */
+type Played = [Section, number, number];
 
 export interface Station {
   /** Número de emisora desde el principio de la partida. */
@@ -65,15 +71,27 @@ function blockStarts(song: SongDef): number[] {
  */
 const LEAD_IN_BARS = 2;
 
-function leadIn(sections: [Section, number][]): [Section, number][] {
-  const out: [Section, number][] = [['intro', LEAD_IN_BARS]];
+function leadIn(sections: [Section, number][]): Played[] {
+  const out: Played[] = [['intro', LEAD_IN_BARS, 0]];
   let skip = LEAD_IN_BARS;
   for (const [sec, len] of sections) {
     const cut = Math.min(skip, len);
     skip -= cut;
-    if (len > cut) out.push([sec, len - cut]);
+    if (len > cut) out.push([sec, len - cut, cut]);
   }
   return out;
+}
+
+/** Tramos de una emisora para escribir su tráfico. */
+export function stationSpans(st: Station): TrafficSpan[] {
+  return st.blocks.flatMap((b) => {
+    let start = b.start;
+    return b.played.map(([section, bars]) => {
+      const span = { section, start, bars, barDur: b.barDur };
+      start += bars * b.barDur;
+      return span;
+    });
+  });
 }
 
 /** Secciones de la canción entre `from` y `from + len`, recortadas. */
@@ -174,7 +192,7 @@ export class EndlessTimeline {
     const sweepBars = n === 0 ? FIRST_SWEEP_BARS : SWEEP_BARS;
     const sweepStart = this.t;
     this.span(sweepBars, bar0);
-    this.writer.section('intro', this.bar - sweepBars, sweepBars);
+    this.writer.section('intro', this.bar - sweepBars, sweepBars, song.draw);
     const start = this.t;
     const blocks: Block[] = BLOCK_STARTS[style].map((songBar, k) => {
       const rate = 1 + ((MAX_RATE - 1) * k) / (BLOCK_ORDER.length - 1);
@@ -182,12 +200,13 @@ export class EndlessTimeline {
       const firstBar = this.bar;
       const blockStart = this.span(BLOCK_BARS, barDur);
       const sections = sectionsIn(song, songBar, BLOCK_BARS);
+      const played: Played[] = k === 0 ? leadIn(sections) : sections.map(([sec, len]) => [sec, len, 0]);
       let at = firstBar;
-      for (const [sec, len] of k === 0 ? leadIn(sections) : sections) {
-        this.writer.section(sec, at, len);
+      for (const [sec, len, cut] of played) {
+        this.writer.section(sec, at, len, song.draw, cut);
         at += len;
       }
-      return { start: blockStart, end: this.t, rate, songBar, barDur, sections };
+      return { start: blockStart, end: this.t, rate, songBar, barDur, sections, played };
     });
     this.stations.push({ n, style, lap: Math.floor(n / LEVELS.length), level, sweepStart, sweepBarDur: bar0, start, end: this.t, blocks });
     for (const c of this.writer.drain()) this.pending.push(...this.mapper.map(c));

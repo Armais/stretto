@@ -1,6 +1,8 @@
 // Números del juego. Lo que viene de DISENO.md lleva su referencia (P2, P5...).
 // Lo marcado como provisional es solo para el prototipo y se ajusta al probar.
 
+import type { Section } from './game/song';
+
 export type Difficulty = 'easy' | 'normal' | 'hard';
 export type Layer = 'drums' | 'bass' | 'chords' | 'melody' | 'arp' | 'solo';
 export const LAYERS: Layer[] = ['drums', 'bass', 'chords', 'melody', 'arp', 'solo'];
@@ -23,11 +25,19 @@ export const PERFECT_FRACTION = 0.4;
 
 /** P5: puntos y notas finales. */
 export const POINTS = { perfect: 300, good: 100 } as const;
+/** Lo que vale un cambio bueno para la nota: un perfecto vale POINTS.perfect. */
+export const GRADE_GOOD = 200;
 export const GRADES: { grade: string; min: number }[] = [
   { grade: 'S', min: 0.95 },
   { grade: 'A', min: 0.85 },
   { grade: 'B', min: 0.7 },
 ];
+
+/** Racha: cada `every` cambios buenos seguidos, el multiplicador sube un escalón. */
+export const STREAK = { every: 5, maxMultiplier: 4 } as const;
+
+/** Provisional: segundos antes y después de su ventana en que una pulsación es de esa línea. */
+export const LINE_GRACE = 0.35;
 
 /** P2: pistas que mete cada marcha, según las marchas del vehículo. */
 export const LAYERS_BY_GEAR: Record<number, Layer[][]> = {
@@ -42,7 +52,6 @@ export type PickupKind = 'points' | 'repair' | 'nitro' | 'multiplier';
 export const PICKUPS = {
   repair: 25,
   points: 50,
-  multiplier: 2,
   /** El nitro dura hasta la siguiente línea, y si la aciertas el cambio vale esto por sus puntos. */
   nitroShift: 2,
   /** Velocidad extra durante el nitro. Provisional. */
@@ -72,12 +81,12 @@ export const WORLD = {
 } as const;
 
 /**
- * Provisional: tráfico. Cada cierto tramo (al azar entre gapMin y gapMax metros de distancia
- * relativa) aparece un grupo: un coche suelto o una pareja que deja libre un solo carril.
+ * Provisional: tráfico. Va escrito con la música (game/trafficChart.ts): cada grupo, un coche
+ * suelto o una pareja, pasa junto al jugador en un tiempo débil del compás.
  */
 export const TRAFFIC = {
-  gapMin: 42,
-  gapMax: 75,
+  /** Grupos por compás en cada sección. Caben dos: los tiempos 2 y 4. */
+  groupsPerBar: { intro: 0, verse: 1.5, pre: 1.5, chorus: 2, break: 0.25, build: 1.5, bridge: 1, final: 2, outro: 0.5 } as Record<Section, number>,
   /** gap multiplica la distancia entre grupos; pairs es la probabilidad de pareja. */
   byDifficulty: {
     easy: { gap: 1.5, pairs: 0.15 },

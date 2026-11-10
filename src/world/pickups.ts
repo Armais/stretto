@@ -14,8 +14,8 @@ function glow(hex: number, k: number): THREE.Color {
   return new THREE.Color(hex).multiplyScalar(k);
 }
 
-/** Texto "×2" pintado en un canvas, para el multiplicador. */
-function x2Texture(): THREE.CanvasTexture {
+/** Texto "×+" pintado en un canvas: el premio sube un escalón el multiplicador. */
+function stepTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 128;
   c.height = 128;
@@ -24,7 +24,7 @@ function x2Texture(): THREE.CanvasTexture {
   g.font = 'bold 84px "Segoe UI", system-ui, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText('×2', 64, 68);
+  g.fillText('×+', 64, 68);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -47,7 +47,7 @@ function buildIcon(kind: PickupKind): THREE.Object3D {
       // Plano mirando a la cámara (un sprite no se doblaría con las curvas).
       const plane = new THREE.Mesh(
         new THREE.PlaneGeometry(1.2, 1.2),
-        new THREE.MeshBasicMaterial({ map: x2Texture(), color: glow(COLORS[kind], 2.2), transparent: true, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ map: stepTexture(), color: glow(COLORS[kind], 2.2), transparent: true, depthWrite: false }),
       );
       plane.userData.noSpin = true;
       return plane;
