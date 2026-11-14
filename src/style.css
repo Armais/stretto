@@ -472,6 +472,18 @@ body {
 .m-table td { padding: 7px 8px; }
 .m-table td:first-child { width: 2em; padding-left: 0; color: var(--muted); }
 .m-table td:last-child { text-align: right; font-weight: 600; }
+/* Ranking mundial: hasta 10 puestos y tu fila, más apretado para que quepa en 540 px. */
+.m-table.m-world { margin-bottom: 10px; font-size: 15px; }
+.m-table.m-world td { padding: 2px 8px; white-space: nowrap; }
+.m-table.m-world td:first-child { width: 2.6em; padding-left: 0; }
+.m-table .m-me td, .m-table .m-me td:first-child { color: var(--accent); }
+.m-you { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
+.m-table .m-gap td { padding: 0 8px; font-size: 17px; line-height: 0.9; letter-spacing: 0.2em; color: var(--muted); }
+.m-table .m-gap td:last-child { text-align: left; font-weight: 400; }
+.m-scroll { overflow-y: auto; scrollbar-width: none; }
+.m-scroll::-webkit-scrollbar { display: none; }
+.m-table .m-pin td { position: sticky; bottom: 0; }
+.m-note { margin-bottom: 4px; font-size: 14px; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
   .m-row.focus::before { animation: none; }
@@ -578,6 +590,11 @@ html.touch .m-legend { top: calc(14px + env(safe-area-inset-top)); bottom: auto;
   .menu.results .m-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; column-gap: 48px; width: min(900px, 100%); }
   .menu.results h2 { grid-column: 1 / -1; }
   .menu.results .m-result { margin-bottom: 0; }
+  /* Récords: los 10 primeros se desplazan dentro de su hueco; tu fila y el menú, siempre a la vista. */
+  .menu.records h2 { margin-bottom: 6px; }
+  .menu.records .m-row { min-height: 34px; }
+  .menu.records .m-scroll { max-height: calc(100dvh - 200px); }
+  .menu.records .m-pin td { background: rgba(var(--night), 0.94); }
 }
 
 /* Con el móvil en vertical, solo el aviso de girarlo. */

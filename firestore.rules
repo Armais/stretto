@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// Ranking online de Stretto: boards/{nivel}-{dificultad}/scores/{id}.
+// Cualquiera lo lee; solo se pueden añadir puntuaciones con el formato correcto, nunca
+// cambiarlas ni borrarlas. Para las trampas burdas, no para todas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Lo más alto que se puede sacar en cada nivel: todas las líneas perfectas con el
+    // multiplicador al máximo y nitro, más un premio de puntos cada 4 s. El 0 es el infinito.
+    function maxScore(board) {
+      return {
+        '0': 5000000,
+        '1': 81000,
+        '2': 85400,
+        '3': 99800,
+        '4': 114000,
+        '5': 123600
+      }[board.split('-')[0]];
+    }
+
+    function validEntry(board, d) {
+      return d.keys().hasOnly(['name', 'score', 'grade', 'vehicle', 'pid', 'at'])
+        && d.keys().hasAll(['name', 'score', 'grade', 'vehicle', 'pid', 'at'])
+        && d.name is string && d.name.matches('^[\\p{L}\\p{N} _.-]{3,12}$')
+        && d.score is int && d.score > 0 && d.score <= maxScore(board)
+        && d.grade is string && d.grade.matches('^(S|A|B|C|[0-9]{1,4}:[0-5][0-9])$')
+        && d.vehicle in ['compact', 'muscle', 'bike', 'wedge']
+        && d.pid is string && d.pid.matches('^[0-9a-f]{16}$')
+        && d.at == request.time;
+    }
+
+    match /boards/{board}/scores/{id} {
+      allow read: if true;
+      allow create: if board.matches('^[0-5]-(easy|normal|hard)$')
+        && validEntry(board, request.resource.data);
+    }
+  }
+}

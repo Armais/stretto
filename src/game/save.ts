@@ -1,6 +1,7 @@
 import type { Difficulty } from '../config';
 import type { Lang } from '../i18n';
 import { ENDLESS_ID, LEVELS } from './levels';
+import type { PendingScore } from './online';
 import { VEHICLES, type VehicleId } from './vehicles';
 
 // Partida guardada en el navegador: opciones, progreso y récords locales.
@@ -26,6 +27,10 @@ export interface SaveData {
   name: string;
   /** Clave `${nivel}-${dificultad}` → los 5 mejores. */
   records: Record<string, RecordEntry[]>;
+  /** Identificador anónimo para reconocer tus entradas en el ranking online. */
+  pid: string;
+  /** Récords que aún no se han podido subir al ranking online. */
+  pending: PendingScore[];
 }
 
 const KEY = 'stretto.save.v1';
@@ -41,6 +46,8 @@ const DEFAULTS: SaveData = {
   lastVehicle: 'compact',
   name: '',
   records: {},
+  pid: '',
+  pending: [],
 };
 
 function load(): SaveData {

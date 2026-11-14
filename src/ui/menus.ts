@@ -1,5 +1,6 @@
 import type { Difficulty } from '../config';
 import { ENDLESS_ACCENT, ENDLESS_ID, LEVELS } from '../game/levels';
+import { worldBoard, type WorldBoard } from '../game/online';
 import { levelUnlocked, persist, recordsFor, save, vehicleUnlocked } from '../game/save';
 import { VEHICLES, type Vehicle, type VehicleId } from '../game/vehicles';
 import { LANG_NAMES, LANGS, currentLang, setLang, t, type TextKey } from '../i18n';
@@ -60,6 +61,17 @@ const meter = (v: number): string =>
 /** Flechas a los lados de una tira de tarjetas. */
 const strip = (cards: string): string =>
   `<span class="m-arrow" data-dir="-1">‹</span><div class="m-cards">${cards}</div><span class="m-arrow" data-dir="1">›</span>`;
+const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+/** Fila de la tabla de récords; las tuyas van marcadas. */
+const recordRow = (rank: number, r: { name: string; vehicle: VehicleId; grade: string; score: number }, mine = false): string =>
+  `<tr${mine ? ' class="m-me"' : ''}><td>${rank.toLocaleString()}</td><td>${esc(r.name)}${mine ? ` <span class="m-you">${t('you')}</span>` : ''}</td><td>${t(r.vehicle)}</td><td>${esc(r.grade)}</td><td>${r.score.toLocaleString()}</td></tr>`;
+
+/** Ranking mundial de la pantalla de récords: el que se está pidiendo o el que llegó. */
+interface WorldState {
+  key: string;
+  state: 'loading' | 'ok' | 'error';
+  data?: WorldBoard;
+}
 
 export class Menus {
   active = false;
@@ -75,6 +87,7 @@ export class Menus {
   private vehicle: VehicleId = save.lastVehicle;
   private recordsLevel = 1;
   private recordsDiff: Difficulty = save.difficulty;
+  private world: WorldState = { key: '', state: 'loading' };
 
   constructor(container: HTMLElement, actions: MenuActions) {
     this.actions = actions;
@@ -241,18 +254,47 @@ export class Menus {
       [
         {
           html: () => levelRow(this.recordsLevel),
-          left: () => (this.recordsLevel = cycle(PLAY_IDS, this.recordsLevel, -1)),
-          right: () => (this.recordsLevel = cycle(PLAY_IDS, this.recordsLevel, 1)),
+          left: () => {
+            this.recordsLevel = cycle(PLAY_IDS, this.recordsLevel, -1);
+            this.loadWorld();
+          },
+          right: () => {
+            this.recordsLevel = cycle(PLAY_IDS, this.recordsLevel, 1);
+            this.loadWorld();
+          },
         },
         {
           html: () => arrows(t('difficulty'), t(this.recordsDiff)),
-          left: () => (this.recordsDiff = cycle(DIFFS, this.recordsDiff, -1)),
-          right: () => (this.recordsDiff = cycle(DIFFS, this.recordsDiff, 1)),
+          left: () => {
+            this.recordsDiff = cycle(DIFFS, this.recordsDiff, -1);
+            this.loadWorld();
+          },
+          right: () => {
+            this.recordsDiff = cycle(DIFFS, this.recordsDiff, 1);
+            this.loadWorld();
+          },
         },
         { html: () => t('back'), enter: () => this.title() },
       ],
-      { back: () => this.title(), body: () => this.recordsTable() },
+      { back: () => this.title(), body: this.recordsBody, cls: 'records' },
     );
+    this.loadWorld();
+  }
+
+  /** Pide el ranking mundial del nivel y dificultad que se ven, y repinta al llegar. */
+  private loadWorld(): void {
+    const key = `${this.recordsLevel}-${this.recordsDiff}`;
+    this.world = { key, state: 'loading' };
+    worldBoard(this.recordsLevel, this.recordsDiff).then(
+      (data) => this.worldArrived(key, { key, state: 'ok', data }),
+      () => this.worldArrived(key, { key, state: 'error' }),
+    );
+  }
+
+  private worldArrived(key: string, w: WorldState): void {
+    if (this.world.key !== key) return;
+    this.world = w;
+    if (this.active && this.body === this.recordsBody) this.render();
   }
 
   /** Mientras se descargan las pistas de la canción. */
@@ -425,13 +467,26 @@ export class Menus {
     }).join('');
   }
 
-  private recordsTable(): string {
-    const list = recordsFor(this.recordsLevel, this.recordsDiff);
-    if (!list.length) return `<div class="m-empty">${t('noRecords')}</div>`;
-    return `<table class="m-table">${list
-      .map((r, i) => `<tr><td>${i + 1}</td><td>${r.name}</td><td>${t(r.vehicle)}</td><td>${r.grade}</td><td>${r.score.toLocaleString()}</td></tr>`)
-      .join('')}</table>`;
-  }
+  /** Ranking mundial (P7); sin conexión, los récords de este navegador con un aviso. */
+  private recordsBody = (): string => {
+    const w = this.world;
+    if (w.state === 'loading') return `<div class="m-empty">${t('worldLoading')}</div>`;
+    if (w.state === 'error') {
+      const list = recordsFor(this.recordsLevel, this.recordsDiff);
+      const note = `<div class="m-note">${t('worldOffline')}</div>`;
+      if (!list.length) return `${note}<div class="m-empty">${t('noRecords')}</div>`;
+      return `${note}<table class="m-table m-world">${list.map((r, i) => recordRow(i + 1, r)).join('')}</table>`;
+    }
+    const { top, me } = w.data!;
+    if (!top.length && !me) return `<div class="m-empty">${t('noRecords')}</div>`;
+    const rows = top.map((r, i) => recordRow(i + 1, r, r.mine));
+    if (me) {
+      if (top.length) rows.push(`<tr class="m-gap"><td></td><td colspan="4">···</td></tr>`);
+      // Si la tabla no cabe (un móvil en horizontal), se desplaza y tu fila se queda abajo a la vista.
+      rows.push(recordRow(me.rank, me.entry, true).replace('class="m-me"', 'class="m-me m-pin"'));
+    }
+    return `<div class="m-scroll"><table class="m-table m-world">${rows.join('')}</table></div>`;
+  };
 
   private changeLang(d: number): void {
     const next = cycle(LANGS, currentLang(), d);

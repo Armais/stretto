@@ -70,6 +70,7 @@ a subfolder).
 | `public/` | 3D models, music stems and sound effects loaded at runtime |
 | `tools/blender/` | Scripts that build the vehicles and the scenery in Blender (sources in `assets/blender/`) |
 | `tools/sonicpi/` | The songs and sound effects, written for [Sonic Pi](https://sonic-pi.net/), and the script that records them into stems |
+| `firestore.rules` | Security rules of the online ranking (Cloud Firestore): anyone can read it, scores can only be added in the right format and never changed |
 
 ![Coast road](media/coast.jpg)
 
@@ -78,4 +79,5 @@ a subfolder).
 Made by **Astro Arcade**.
 
 - [three.js](https://threejs.org/) (MIT license).
+- [Firebase](https://firebase.google.com/) JavaScript SDK, for the online ranking (Apache License 2.0).
 - [Overpass](https://overpassfont.org/) font (SIL Open Font License 1.1, see `src/fonts/OFL.txt`).

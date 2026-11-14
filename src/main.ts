@@ -10,6 +10,7 @@ import { EndlessTimeline, LAP, stationSpans, type Station } from './game/endless
 import { ENDLESS_ID, LEVELS, type LevelDef } from './game/levels';
 import { Race, type Cue, type RaceEvent } from './game/race';
 import { Approach, writeTraffic, type TrafficGroup, type TrafficSpan } from './game/trafficChart';
+import { flushScores, submitScore } from './game/online';
 import { addRecord, levelUnlocked, markPassed, qualifies, save, vehicleUnlocked } from './game/save';
 import { barDuration, sectionAt } from './game/song';
 import { VEHICLES, vehicleById, type Vehicle, type VehicleId } from './game/vehicles';
@@ -95,14 +96,16 @@ const menus = new Menus(container, {
   },
   saveRecord: (name) => {
     if (!race) return;
-    addRecord(playingId(), save.difficulty, {
+    const entry = {
       name,
       score: race.score,
       // En el infinito no hay nota: se guarda el tiempo aguantado.
       grade: endless ? survived : race.grade(),
       vehicle: vehicle.id,
       date: new Date().toISOString().slice(0, 10),
-    });
+    };
+    addRecord(playingId(), save.difficulty, entry);
+    submitScore(playingId(), save.difficulty, entry);
   },
 });
 const touchPad = new TouchPad(container, (a, at) => raceInput(a, at), () => {
@@ -733,7 +736,11 @@ menus.title();
 // logo no se pinta nada más, para que no se quede a tirones.
 bendObject(stage.scene);
 stage.render();
-void playBoot(mixer).then(() => (booting = false));
+void playBoot(mixer).then(() => {
+  booting = false;
+  // Récords que no se pudieron subir al ranking online la última vez.
+  void flushScores();
+});
 requestAnimationFrame(frame);
 // El fondo del título se rehace con las piezas de Blender en cuanto llegan.
 void loadProps(level.scenery)
